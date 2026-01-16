@@ -983,7 +983,10 @@ namespace Sl
             cmd.push("cl", "/help", "/nologo");
         else
             cmd.push("cc", "--help");
-        if (!cmd.execute({.stdout_desc = &output, .stderr_desc = &output}).wait()) return false;
+        CmdOptions opt;
+        opt.stdout_desc = &output;
+        opt.stderr_desc = &output;
+        if (!cmd.execute(opt).wait()) return false;
 
         StrBuilder buffer(get_global_allocator());
         close_file(output);
