@@ -1,0 +1,25 @@
+# C/C++ object files
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.out
+*.old
+*.pdb
+*.rdi
+*.ilk
+
+# Dependency files
+*.d
+
+# Temp files
+*.temp
+*.tmp
+*.txt
+*~
+
+!example/test_folder/*
