@@ -50,12 +50,12 @@ namespace Sl
 
             IF_CONSTEXPR (cpp_compliant_and_slow) {
                 // I don't know what's std::vector devs were smoking
-                if (index == count - 1) {
+                if (index != count - 1) {
                     std::swap(data[index], data[--count]);
-                    data[count].~T();
+                } else {
+                    data[index].~T();
+                    --count;
                 }
-                else
-                    data[index] = std::move(data[--count]);
             }
             else
                 data[index] = std::move(data[--count]);
@@ -255,8 +255,6 @@ namespace Sl
         }
     };
 
-
-    // * LocalArray: Stack array for trivial types (no deinit).
     // * Uses LOCAL_ARRAY_INITIAL_SIZE stack storage initially.
     // * This allows to speed it up on small scale sizes.
     // * Allocates heap/custom allocator when exceeded.
@@ -267,7 +265,7 @@ namespace Sl
     {
     private:
         T* _data;
-        T _storage[LOCAL_ARRAY_INITIAL_SIZE];
+        alignas(alignof(T)) u8 _storage[LOCAL_ARRAY_INITIAL_SIZE * sizeof(T)];
         usize _count;
         usize _allocated_capacity;
         bool _is_heap_allocated; // True if allocated with ARRAY_REALLOC or Allocator
@@ -333,7 +331,7 @@ namespace Sl
         {
             ASSERT(_count > 0, "Cannot pop from empty array");
             if (_count < 1) return;
-            --_count;
+            _data[--_count].~T();
         }
 
         void remove_unordered(usize index) noexcept
@@ -341,7 +339,12 @@ namespace Sl
             ASSERT(_count > 0 && index <= _count, "Index out of range");
             if (_count == 0 || index >= _count) return;
 
-            _data[index] = std::move(_data[--_count]);
+            if (index != _count - 1) {
+                std::swap(_data[index], _data[--_count]);
+            } else {
+                _data[index].~T();
+                --_count;
+            }
         }
 
         template<typename Function>
@@ -360,6 +363,9 @@ namespace Sl
 
         void clear() noexcept
         {
+            for (usize i = 0; i < _count; ++i) {
+                _data[i].~T();
+            }
             _count = 0;
         }
 
@@ -368,7 +374,7 @@ namespace Sl
             clear();
             if (is_heap_allocated()) {
                 ARRAY_FREE(_data);
-                _data = &_storage;
+                _data = (T*) &_storage;
                 _is_heap_allocated = false;
             }
         }
