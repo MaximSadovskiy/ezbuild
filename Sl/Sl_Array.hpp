@@ -136,10 +136,6 @@ namespace Sl
                 else
                     data = (T*)ARRAY_REALLOC(data, capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 ASSERT_DEBUG(data != nullptr);
-                // IF_CONSTEXPR (cpp_compliant_and_slow) {
-                //     for (usize i = count; i < capacity; ++i)
-                //         ::new (data + i) T(static_cast<T&&>(data[i]));
-                // }
             }
         }
 
@@ -259,6 +255,13 @@ namespace Sl
         }
     };
 
+
+    // * LocalArray: Stack array for trivial types (no init).
+    // * Uses LOCAL_ARRAY_INITIAL_SIZE stack storage initially.
+    // * This allows to speed it up on small scale sizes.
+    // * Allocates heap/custom allocator when exceeded.
+    static_assert((LOCAL_ARRAY_INITIAL_SIZE) > 0ll, "Provide correct size");
+
     template<typename T>
     class LocalArray
     {
@@ -291,6 +294,8 @@ namespace Sl
                 auto* new_data = (T*)ARRAY_REALLOC(nullptr, size_of_t() * _allocated_capacity);
                 memory_copy(new_data, size_of_t() * LOCAL_ARRAY_INITIAL_SIZE, _data, size_of_t() * LOCAL_ARRAY_INITIAL_SIZE);
                 _data = new_data;
+            } else if (_count + 1 > _allocated_capacity && is_heap_allocated()) {
+                resize(_count + 1);
             }
             ::new (_data + _count++) T(std::forward<Args>(args)...);
         }
@@ -311,17 +316,32 @@ namespace Sl
         T& first() noexcept { return get(0); }
         T& last() noexcept { return get(_count - 1); }
 
+        // Does not shrink
+        void resize(usize needed_capacity) noexcept
+        {
+            if (needed_capacity > _allocated_capacity)
+            {
+                if (_allocated_capacity == 0) _allocated_capacity = 32;
+                while (_allocated_capacity < needed_capacity) _allocated_capacity *= 2;
+
+                _data = (T*)ARRAY_REALLOC(_data, _allocated_capacity * size_of_t());
+                ASSERT_DEBUG(_data != nullptr);
+            }
+        }
+
         void pop() noexcept
         {
-            // @TODO implement pop
-            TODO("pop");
-            // ASSERT(_count > 0, "Cannot pop from empty array");
-            // if (_count < 1) return;
-            //
-            // IF_CONSTEXPR (cpp_compliant_and_slow) {
-            //     data[_count - 1].~T();
-            // }
-            // _count -= 1;
+            ASSERT(_count > 0, "Cannot pop from empty array");
+            if (_count < 1) return;
+            --_count;
+        }
+
+        void remove_unordered(usize index) noexcept
+        {
+            ASSERT(_count > 0 && index <= _count, "Index out of range");
+            if (_count == 0 || index >= _count) return;
+
+            _data[index] = std::move(_data[--_count]);
         }
 
         template<typename Function>
@@ -341,8 +361,6 @@ namespace Sl
         void clear() noexcept
         {
             _count = 0;
-            // @TODO call destructors
-            TODO("clear");
         }
 
         void cleanup() noexcept
