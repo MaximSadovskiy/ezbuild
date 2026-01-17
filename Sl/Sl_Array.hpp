@@ -164,6 +164,8 @@ namespace Sl
                 IF_CONSTEXPR (cpp_compliant_and_slow) {
                    for (usize i = 0; i < new_count; ++i)
                        new_data[i] = std::move(data[i]);
+                   for (usize i = new_count; i < count; ++i)
+                       data[i].~T();
                 } else {
                     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
                     memory_copy((void*)new_data, needed_capacity_bytes, (void*)data, needed_capacity_bytes);
