@@ -256,7 +256,7 @@ namespace Sl
     };
 
 
-    // * LocalArray: Stack array for trivial types (no init).
+    // * LocalArray: Stack array for trivial types (no deinit).
     // * Uses LOCAL_ARRAY_INITIAL_SIZE stack storage initially.
     // * This allows to speed it up on small scale sizes.
     // * Allocates heap/custom allocator when exceeded.
