@@ -50,6 +50,7 @@ namespace Sl
     {
         ASSERT_NOT_NULL(src);
         ASSERT_NOT_NULL(dest);
+        if (src == nullptr || dest == nullptr) return;
 
         const usize copy_size = MIN(dest_size, src_size);
 
@@ -65,6 +66,8 @@ namespace Sl
     void memory_set(void* src, u8 data, usize size) noexcept
     {
         ASSERT_NOT_NULL(src);
+        if (src == nullptr) return;
+
         for (usize i = 0; i < size; ++i)
             ((char*) src)[i] = static_cast<char>(data);
     }

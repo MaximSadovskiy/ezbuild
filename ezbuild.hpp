@@ -158,7 +158,7 @@ namespace Sl
     // If build script was rebuilt last time - returns true
     bool was_cpp_rebuilt(int argc, char** argv);
     // Compares time of depency files with provided file. If true, that means file needs to be rebuilt
-    bool file_needs_rebuilt(StrView file, const char** dependency_files, usize size);
+    bool file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
     // Must have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
     bool file_needs_rebuilt_cpp(StrView obj, StrView src_file);
     // Checks if provided argument is supported for current compiler
@@ -1108,7 +1108,7 @@ namespace Sl
 
         return read_entire_file(file_handle, buffer);
     }
-    bool file_needs_rebuilt(StrView file, const char** dependency_files, usize size)
+    bool file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files)
     {
         bool result = false;
         FileHandle h;
@@ -1120,8 +1120,7 @@ namespace Sl
             DEFER_RETURN(true);
         }
 
-        for (usize i = 0; i < size; ++i) {
-            const char* dependency = dependency_files[i];
+        for (auto& dependency : dependency_files) {
             FileHandle dependency_h;
             if (!open_file(dependency, dependency_h)) {
                 DEFER_RETURN(true);
@@ -1167,12 +1166,12 @@ namespace Sl
         }
 
         if (!GetExitCodeProcess(id, &exit_status)) {
-            log(LOG_ERROR, "Could not get exit code of process 0x%p\n", id);
+            log(LOG_ERROR, "Could not get exit code of process 0x%zx\n", (usize)id);
             DEFER_RETURN(false);
         }
 
         if (exit_status != 0) {
-            log(LOG_ERROR, "Process 0x%p exited with exit code %lu\n", id, exit_status);
+            log(LOG_ERROR, "Process 0x%zx exited with exit code %lu\n", (usize)id, exit_status);
             DEFER_RETURN(false);
         }
     end:
@@ -1716,6 +1715,24 @@ namespace Sl
                     break;
                 auto depency_view = view.chop_left(end_dep);
                 depency_view.trim();
+                StrBuilder fixed_path_depency = {get_global_allocator()};
+                do {
+                    auto index = depency_view.find_first_occurrence_word("\\./");
+                    if (index == StrView::INVALID_INDEX) {
+                        if (fixed_path_depency.count > 0)
+                            fixed_path_depency.append(depency_view);
+                        break;
+                    }
+                    fixed_path_depency.append(depency_view.chop_left(index));
+                    fixed_path_depency.append('/');
+                    depency_view.chop_left(3);
+                } while(depency_view.size > 0);
+                if (fixed_path_depency.count > 0) {
+                    fixed_path_depency.append_null(false);
+                    depency_view = fixed_path_depency.to_string_view(false);
+                }
+                depency_view.trim_right_char('\n');
+                depency_view.trim_right_char('\r');
                 depencies_out.push(depency_view);
             } while(view.size > 0);
         } else {
@@ -1878,7 +1895,7 @@ namespace Sl
                     output_file_object.append("_cl.d");
                 else
                     output_file_object.append(".d");
-                output_file_object.append_null();
+                output_file_object.append_null(false);
                 const auto dependency_path = output_file_object.to_string_view(true);
                 bool need_to_recreate_dependency_file = true;
                 {
@@ -1919,7 +1936,7 @@ namespace Sl
                 output_file_object.clear();
                 output_file_object.append(file.data, file.size);
                 output_file_object.append(".obj");
-                output_file_object.append_null();
+                output_file_object.append_null(false);
                 const auto output_file_object_path = output_file_object.to_string_view(true);
                 if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file))
                 {
@@ -2158,12 +2175,11 @@ namespace Sl
     {
         if (argv == nullptr) return false;
 
-        const char* signature = "EZBUILD_REBUILT";
-        const auto signature_size = memory_strlen(signature);
+        StrView signature = "EZBUILD_REBUILT";
         for (int i = 0; i < argc; ++i)
         {
             if (argv[i] == nullptr) continue;
-            if (memory_equals(argv[i], memory_strlen(argv[i]), signature, signature_size))
+            if (memory_equals(argv[i], memory_strlen(argv[i]), signature.data, signature.size))
                 return true;
         }
         return false;
@@ -2180,7 +2196,7 @@ namespace Sl
             }
         }
 
-        Array<const char*> source_paths(get_global_allocator());
+        LocalArray<StrView> source_paths(get_global_allocator());
         source_paths.push(source_path);
 
         StrView executable_name(argv[0]);
@@ -2199,8 +2215,9 @@ namespace Sl
         SetConsoleOutputCP(CP_UTF8);
     #endif // !EZBUILD_DONT_SET_CONSOLE && _WIN32
 
-        if (!force && !file_needs_rebuilt(executable_name, source_paths.data, source_paths.count)) {
+        if (!force && !file_needs_rebuilt(executable_name, source_paths)) {
             source_paths.cleanup();
+            temp_reset();
             return;
         }
 
@@ -2208,8 +2225,10 @@ namespace Sl
         old_binary_path.append(executable_name.data, executable_name.size);
         old_binary_path.append(".old");
         old_binary_path.append_null(false);
+        auto old_binary_path_view = old_binary_path.to_string_view(true);
 
-        if (!rename_file(executable_name, old_binary_path.data)) exit(1);
+        if (!rename_file(executable_name, old_binary_path_view))
+            exit(EXIT_FAILURE);
 
         options.is_cpp = true;
         options.incremental_build = false;
@@ -2238,7 +2257,7 @@ namespace Sl
         cmd.output_file(executable_name, true);
         bool run = true;
         if (!cmd.build(run)) {
-            rename_file(old_binary_path.data, executable_name);
+            rename_file(old_binary_path_view, executable_name);
             exit(EXIT_FAILURE);
         }
         exit(EXIT_SUCCESS);

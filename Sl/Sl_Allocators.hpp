@@ -102,10 +102,21 @@ namespace Sl
 
     struct ArenaAllocator : Allocator
     {
-        Array<ArenaRegion, false> regions;
-        usize current_region_index = 0;
+    private:
+        Array<ArenaRegion, false> _regions;
+        usize _current_region_index;
+        usize _region_size;
+    public:
+        ArenaAllocator(usize default_region_size = ALLOCATOR_INITIAL_SIZE)
+        {
+            _region_size = default_region_size;
+            _current_region_index = 0;
+        }
 
-        void init(usize total_size);
+        inline Array<ArenaRegion, false>& regions() { return _regions; }
+        inline usize current_region_index() { return _current_region_index; }
+        inline usize region_size() { return _region_size; }
+
         void* allocate(usize size) override;
         void* allocate_aligned(usize size, u16 alignment) override;
         void* reallocate(void* ptr, usize old_size, usize new_size) override;
@@ -126,7 +137,7 @@ namespace Sl
         usize cursor;
         usize total_size;
 
-        LinearAllocator(usize total_size = GLOBAL_ALLOCATOR_INITIAL_SIZE)
+        LinearAllocator(usize total_size = ALLOCATOR_INITIAL_SIZE)
         {
             this->data = nullptr;
             this->cursor = 0;
@@ -154,7 +165,7 @@ namespace Sl
         void* current;
         usize total_size;
 
-        StackAllocator(usize total_size = GLOBAL_ALLOCATOR_INITIAL_SIZE)
+        StackAllocator(usize total_size = ALLOCATOR_INITIAL_SIZE)
         {
             this->begin = nullptr;
             this->current = nullptr;
@@ -185,7 +196,7 @@ namespace Sl
         usize chunk_count;
         usize chunk_size;
 
-        PoolAllocator(usize chunk_count = 32, usize chunk_size = GLOBAL_ALLOCATOR_INITIAL_SIZE / 32)
+        PoolAllocator(usize chunk_count = 32, usize chunk_size = ALLOCATOR_INITIAL_SIZE / 32)
         {
             this->root = nullptr;
             this->pool = nullptr;
@@ -215,8 +226,7 @@ namespace Sl
     Allocator* get_global_allocator() noexcept
     {
         if (_global_alloc == nullptr) {
-            static SL_THREAD_LOCAL ArenaAllocator _default_global_alloc = {};
-            _default_global_alloc.init(GLOBAL_ALLOCATOR_INITIAL_SIZE); // @TODO REMOVE THIS GARBAGE
+            static SL_THREAD_LOCAL ArenaAllocator _default_global_alloc(GLOBAL_ALLOCATOR_INITIAL_SIZE);
             _global_alloc = &_default_global_alloc;
         }
         return _global_alloc;
@@ -267,7 +277,7 @@ namespace Sl
         size = ALIGNMENT(size, alignment);
         if (data == nullptr) {
             if (total_size == 0) total_size = GLOBAL_ALLOCATOR_INITIAL_SIZE;
-            const auto allocated_size = std::max(total_size, size);
+            const auto allocated_size = MAX(total_size, size);
             this->total_size = allocated_size;
             this->data = (char*)ALLOCATOR_MALLOC(allocated_size);
             ASSERT_DEBUG(data != nullptr);
@@ -515,45 +525,28 @@ namespace Sl
         log_empty("|---------------------\n");
     }
 
-    void ArenaAllocator::init(usize default_capacity)
-    {
-        ASSERT_TRUE(default_capacity > 0);
-        current_region_index = 0;
-        ArenaRegion region;
-        region.cursor = 0;
-        region.capacity = default_capacity;
-        region.data = (char*)ALLOCATOR_MALLOC(default_capacity);
-        ASSERT_DEBUG(region.data != nullptr);
-
-        regions.push(region);
-    }
-
     void* ArenaAllocator::allocate_aligned(usize size, u16 alignment)
     {
         const usize aligned_size = ALIGNMENT(size, alignment);
 
         ArenaRegion* region = NULL;
         bool found_region = false;
-        for (usize i = this->current_region_index; i < regions.count; ++i) {
-            region = &regions.get(i);
+        for (usize i = this->_current_region_index; i < _regions.count; ++i) {
+            region = &_regions.get(i);
             if (region->cursor + aligned_size <= region->capacity || region->data == NULL) {
                 found_region = true;
-                this->current_region_index = i;
+                this->_current_region_index = i;
                 break;
             }
         }
         if (!found_region) {
-            ArenaRegion r = {};
-            regions.push(r);
-            region = &regions.last();
-            this->current_region_index = regions.count - 1;
+            _regions.push(ArenaRegion{});
+            region = &_regions.last();
+            this->_current_region_index = _regions.count - 1;
         }
 
         if (region->data == NULL) {
-            ArenaRegion* first = &regions.first();
-            ASSERT(first && first->capacity > 0, "Failed to get first region, probably forgot to initilize Arena");
-
-            const usize allocated_size = MAX(aligned_size, first->capacity);
+            const usize allocated_size = MAX(aligned_size, _region_size);
             region->cursor = 0;
             region->capacity = allocated_size;
             region->data = (char*)ALLOCATOR_MALLOC(allocated_size);
@@ -580,52 +573,45 @@ namespace Sl
 
     void ArenaAllocator::reset()
     {
-        for (usize i = 0; i < regions.count; ++i) {
-            ArenaRegion* r = &regions[i];
-            r->cursor = 0;
+        for (auto& region : _regions) {
+            region.cursor = 0;
         }
+        _current_region_index = 0;
     }
 
     void ArenaAllocator::cleanup()
     {
-        for (usize i = 0; i < regions.count; ++i) {
-            ArenaRegion* r = &regions[i];
-            ALLOCATOR_FREE(r->data);
+        for (auto& region : _regions) {
+            ALLOCATOR_FREE(region.data);
         }
-        regions.cleanup();
-        current_region_index = 0;
+        _regions.cleanup();
+        _current_region_index = 0;
     }
 
     void ArenaAllocator::rewind(Snapshot* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        // auto* snapshot_ptr = dynamic_cast<ArenaSnapshot*>(_snapshot);
-        // ASSERT(snapshot_ptr, "Invalid type of snapshot");
         auto& snapshot = *static_cast<ArenaSnapshot*>(_snapshot);
         ASSERT(snapshot.size_of_allocated_snapshot == sizeof(ArenaSnapshot), "Wrong snapshot type");
-        if (snapshot.region_index < regions.count)
+        if (snapshot.region_index < _regions.count)
         {
-            ArenaRegion* r = &regions.get(snapshot.region_index);
-            r->cursor = snapshot.index;
-            current_region_index = snapshot.region_index;
-            for (usize i = snapshot.region_index + 1; i < regions.count; ++i)
-            {
-                r = &regions.get(i);
-                r->cursor = 0;
-            }
+            auto& region = _regions[snapshot.region_index];
+            region.cursor = snapshot.index;
+            _current_region_index = snapshot.region_index;
+            for (usize i = snapshot.region_index + 1; i < _regions.count; ++i)
+                _regions[i].cursor = 0;
         }
     }
 
     Snapshot* ArenaAllocator::snapshot()
     {
-        ArenaSnapshot* snapshot = nullptr;
-        if (regions.count > 0) {
-            const auto current_index = regions[current_region_index].cursor;
-            snapshot = (ArenaSnapshot*) temp_allocate(sizeof(ArenaSnapshot));
-            snapshot->size_of_allocated_snapshot = sizeof(ArenaSnapshot);
-            snapshot->region_index = current_region_index;
-            snapshot->index = current_index;
-        }
+        if (_regions.count < 1) allocate_aligned(0, 0);
+
+        const auto current_index = _regions[_current_region_index].cursor;
+        ArenaSnapshot* snapshot = (ArenaSnapshot*) temp_allocate(sizeof(ArenaSnapshot));
+        snapshot->size_of_allocated_snapshot = sizeof(ArenaSnapshot);
+        snapshot->region_index = _current_region_index;
+        snapshot->index = current_index;
         return snapshot;
     }
 
@@ -635,7 +621,7 @@ namespace Sl
         log_empty("|---------------------\n");
         log_empty("|Arena allocator:\n");
         log_empty("|---------------------\n");
-        for (auto& region : regions) {
+        for (auto& region : _regions) {
             log_empty("|-region %d\n", iter++);
             log_empty("|  capacity: %zu\n", region.capacity);
             log_empty("|  cursor: %zu\n", region.cursor);

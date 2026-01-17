@@ -56,6 +56,10 @@
 #   define GLOBAL_ALLOCATOR_INITIAL_SIZE (1024 * 64)
 #endif // GLOBAL_ALLOCATOR_INITIAL_SIZE
 
+#ifndef ALLOCATOR_INITIAL_SIZE
+#   define ALLOCATOR_INITIAL_SIZE (1024 * 4)
+#endif // ALLOCATOR_INITIAL_SIZE
+
 //---------------------------
 
 #if defined(_MSC_VER)

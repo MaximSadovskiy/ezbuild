@@ -1,7 +1,6 @@
 #ifndef SL_ARRAY_H
 #define SL_ARRAY_H
 
-#include <memory>
 #include "Sl_Defines.hpp"
 
 namespace Sl
@@ -271,13 +270,15 @@ namespace Sl
         usize _count;
         usize _allocated_capacity;
         bool _is_heap_allocated; // True if allocated with ARRAY_REALLOC or Allocator
+        Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of ARRAY_REALLOC
     public:
-        LocalArray()
+        LocalArray(Allocator* allocator = nullptr)
         {
             _data = (T*) &_storage;
             _count = 0;
             _allocated_capacity = 0;
             _is_heap_allocated = false;
+            _allocator = allocator;
         }
 
         inline T* data() { return _data; }
@@ -291,7 +292,11 @@ namespace Sl
             if (_count + 1 > LOCAL_ARRAY_INITIAL_SIZE && !is_heap_allocated()) {
                  _is_heap_allocated = true;
                 _allocated_capacity = LOCAL_ARRAY_INITIAL_SIZE * 2;
-                auto* new_data = (T*)ARRAY_REALLOC(nullptr, size_of_t() * _allocated_capacity);
+                T* new_data;
+                if (_allocator)
+                    new_data = (T*)_allocator->allocate(size_of_t() * _allocated_capacity);
+                else
+                    new_data = (T*)ARRAY_REALLOC(nullptr, size_of_t() * _allocated_capacity);
                 memory_copy(new_data, size_of_t() * LOCAL_ARRAY_INITIAL_SIZE, _data, size_of_t() * LOCAL_ARRAY_INITIAL_SIZE);
                 _data = new_data;
             } else if (_count + 1 > _allocated_capacity && is_heap_allocated()) {
@@ -321,10 +326,14 @@ namespace Sl
         {
             if (needed_capacity > _allocated_capacity)
             {
+                auto old_capacity = _allocated_capacity;
                 if (_allocated_capacity == 0) _allocated_capacity = 32;
                 while (_allocated_capacity < needed_capacity) _allocated_capacity *= 2;
 
-                _data = (T*)ARRAY_REALLOC(_data, _allocated_capacity * size_of_t());
+                if (_allocator)
+                    _data = (T*)_allocator->reallocate(_data, old_capacity * size_of_t(), _allocated_capacity * size_of_t());
+                else
+                    _data = (T*)ARRAY_REALLOC(_data, _allocated_capacity * size_of_t());
                 ASSERT_DEBUG(_data != nullptr);
             }
         }
@@ -375,7 +384,7 @@ namespace Sl
         {
             clear();
             if (is_heap_allocated()) {
-                ARRAY_FREE(_data);
+                if (_allocator == nullptr) ARRAY_FREE(_data);
                 _data = (T*) &_storage;
                 _is_heap_allocated = false;
             }

@@ -14,7 +14,7 @@ namespace Sl
     {
         StrBuilder(Allocator* allocator = nullptr)
         {
-            current_allocator(allocator);
+            _allocator = allocator;
         }
 
         void append(char ch) noexcept;
@@ -26,7 +26,6 @@ namespace Sl
         void reset() noexcept;
         void align(u16 alignment) noexcept;
         void cleanup() noexcept;
-        void current_allocator(Allocator* allocator) noexcept;
         Allocator* current_allocator() const noexcept;
         char* to_cstring_alloc() const noexcept;
         StrView to_string_view(bool is_null_terminated = false, bool is_wide = false) const noexcept;
@@ -145,11 +144,6 @@ namespace Sl
     Allocator* StrBuilder::current_allocator() const noexcept
     {
         return _allocator;
-    }
-
-    void StrBuilder::current_allocator(Allocator* allocator) noexcept
-    {
-        _allocator = allocator;
     }
 
     char* StrBuilder::to_cstring_alloc() const noexcept

@@ -1,8 +1,6 @@
 #ifndef SL_ASSERTS_H
 #define SL_ASSERTS_H
 
-#include "Sl_Defines.hpp"
-
 #if defined(_DEBUG)
     #if defined(_MSC_VER)
         extern void __cdecl __debugbreak(void);
