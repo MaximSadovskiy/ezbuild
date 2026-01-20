@@ -175,7 +175,7 @@ namespace Sl
     bool rename_file(StrView from, StrView to);
     bool close_file(FileHandle file_handle);
     bool get_file_time(FileHandle file_handle, FileTime& file_time_out);
-    bool get_file_size(FileHandle file_handle, u64& file_size_out);
+    bool get_file_size(FileHandle file_handle, usize& file_size_out);
     s32 compare_file_time(FileTimeUnit file_time1, FileTimeUnit file_time2);
     bool read_folder(StrView folder_path, Array<FileEntry>& files_out);
     bool read_entire_file(StrView file_path, StrBuilder& buffer);
@@ -393,20 +393,31 @@ namespace Sl
         return info;
     }
 
+    inline static void report_error(const char* const format, ...) SL_PRINTF_FORMATER(1, 2);
+    inline static void report_error(const char* const format, ...)
+    {
+        va_list args;
+        va_start(args, format);
+        logger_handler(LOG_ERROR, format, args);
+        log(": %s", get_error_message());
+        if (get_system() != FlagsSystem::WINDOWS)
+            log("\n");
+        va_end(args);
+    }
+
     inline static StrView utf16_to_utf8_windows(const char* utf16_str)
     {
         if (utf16_str == nullptr) return {nullptr, 0};
     #if defined(_WIN32)
         s32 utf8Len = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str, -1, NULL, 0, NULL, NULL);
         if (utf8Len == 0) {
-            printf("Conversion failed for UTF-16 string\n");
+            log_error("Conversion failed for UTF-16 string\n");
             return {nullptr, 0};
         }
 
         auto* utf8_str_out = (char*)get_global_allocator()->allocate(utf8Len);
         if (WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str, -1, utf8_str_out, utf8Len, NULL, NULL) == 0) {
-            printf("Conversion failed for UTF-16 string\n");
-            free(utf8_str_out);
+            log_error("Conversion failed for UTF-16 string\n");
             return {nullptr, 0};
         }
         bool is_wide = true; // should it be a wide?
@@ -422,18 +433,16 @@ namespace Sl
     #if defined(_WIN32)
         s32 wideLen = MultiByteToWideChar(CP_UTF8, 0, ansi_str, -1, NULL, 0);
         if (wideLen == 0) {
-            printf("Conversion failed for string: \"%s\"\n", ansi_str);
+            log_error("Conversion failed for string: \"%s\"\n", ansi_str);
             return {nullptr, 0};
         }
 
         const auto new_size = (sizeof(wchar_t)) * wideLen;
         auto* wide_str_out = (wchar_t*) get_global_allocator()->allocate(new_size);
         if (MultiByteToWideChar(CP_UTF8, 0, ansi_str, -1, wide_str_out, wideLen) == 0) {
-            printf("Conversion failed for string: \"%s\"\n", ansi_str);
-            free(wide_str_out);
+            log_error("Conversion failed for string: \"%s\"\n", ansi_str);
             return {nullptr, 0};
         }
-        // wide_str_out[wideLen] = '\0';
         return StrView((const char*)wide_str_out, new_size, true, true);
     #else
         return StrView(ansi_str);
@@ -501,7 +510,7 @@ namespace Sl
         UNUSED(is_wide);
         result = rename(file_from_path.data, file_to_path.data) == 0;
     #endif // !_WIN32
-        if (!result) log_error("Could not rename file \"%s\" to \"%s\": %s", file_from_path.data, file_to_path.data, get_error_message());
+        if (!result) report_error("Could not rename file \"%s\" to \"%s\"", file_from_path.data, file_to_path.data);
         return result;
     }
     s32 compare_file_time(FileTimeUnit file_time1, FileTimeUnit file_time2)
@@ -541,10 +550,10 @@ namespace Sl
             }
         #endif // !_WIN32
 
-        if (!result) log_error("Could not get time: %s", get_error_message());
+        if (!result) report_error("Could not get time");
         return result;
     }
-    bool get_file_size(FileHandle file_handle, u64& file_size_out)
+    bool get_file_size(FileHandle file_handle, usize& file_size_out)
     {
         bool result = false;
 
@@ -562,7 +571,7 @@ namespace Sl
             }
         #endif // !_WIN32
         if (!result) {
-            log_error("Could not get size of the file: %s\n", get_error_message());
+            report_error("Could not get size of the file");
             return false;
         }
         return result;
@@ -592,24 +601,24 @@ namespace Sl
                     if (!result) break;
                 }
                 if (!result || written_bytes == 0) {
-                    log_error("Could not write to file: %s", get_error_message());
+                    report_error("Could not write to file");
                     return false;
                 }
                 total_written += written_bytes;
             } else {
-                log_error("Could not write to file: %s", get_error_message());
+                report_error("Could not write to file");
                 return false;
             }
         } while(total_written < size);
     #else
-        while (total_written < size) {
+        do {
             write_size = size - total_written;
             if (write_size > 8192) write_size = 8192;
             const char* current_data_ptr = data + total_written;
 
             ssize_t written_bytes = write(file_handle, current_data_ptr, write_size);
             if (written_bytes < 0) {
-                log_error("Could not write to file: %s", get_error_message());
+                report_error("Could not write to file");
                 return false;
             }
             if (written_bytes == 0 && write_size > 0) {
@@ -625,12 +634,12 @@ namespace Sl
                     }
                 }
                 if (!result || written_bytes == 0) {
-                    log_error("Could not write to file: %s", get_error_message());
+                    report_error("Could not write to file");
                     return false;
                 }
             }
             total_written += (usize)written_bytes;
-        }
+        } while (total_written < size);
     #endif // !_WIN32
         return true;
     }
@@ -695,7 +704,7 @@ namespace Sl
         #endif // _WIN32
 
         if (file_handle_out == INVALID_FILE_HANDLE) {
-            log_error("Could not create file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+            report_error("Could not create file \"" SV_FORMAT "\"", SV_ARG(file));
             return false;
         }
         return true;
@@ -710,20 +719,20 @@ namespace Sl
         // Clear read-only attribute
         if (is_wide) {
             if (!SetFileAttributesW((LPCWSTR)file_path, FILE_ATTRIBUTE_NORMAL)) {
-                log_error("Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                report_error("Could not change permissions of file \"" SV_FORMAT "\"", SV_ARG(file));
                 return false;
             }
             if (!DeleteFileW((LPCWSTR)file_path)) {
-                log_error("Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                report_error("Could not delete file \"" SV_FORMAT "\"", SV_ARG(file));
                 return false;
             }
         } else {
             if (!SetFileAttributesA(file_path, FILE_ATTRIBUTE_NORMAL)) {
-                log_error("Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                report_error("Could not change permissions of file \"" SV_FORMAT "\"", SV_ARG(file));
                 return false;
             }
             if (!DeleteFileA(file_path)) {
-                log_error("Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                report_error("Could not delete file \"" SV_FORMAT "\"", SV_ARG(file));
                 return false;
             }
         }
@@ -733,12 +742,12 @@ namespace Sl
         if (lstat(file_path, &st) == 0) {
             // Clear write permission for owner, group, and others
             if (chmod(file_path, st.st_mode | S_IWUSR | S_IWGRP | S_IWOTH) != 0) {
-                log_error("Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), strerror(errno));
+                report_error("Could not change permissions of file \"" SV_FORMAT "\"", SV_ARG(file));
                 return false;
             }
         }
         if (unlink(file_path) != 0) {
-            log_error("Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+            report_error("Could not delete file \"" SV_FORMAT "\"", SV_ARG(file));
             return false;
         }
     #endif // _WIN32
@@ -791,7 +800,7 @@ namespace Sl
     #endif // !_WIN32
 
         if (file_handle_out == INVALID_FILE_HANDLE) {
-            log_error("Could not open file \"%s\": %s", file_path, get_error_message());
+            report_error("Could not open file \"%s\"", file_path);
             return false;
         }
         return true;
@@ -802,7 +811,7 @@ namespace Sl
 
         #ifdef _WIN32
             if (!CloseHandle(file_handle)) {
-                log_error("Could not close file 0x%p: %s", file_handle, get_error_message());
+                report_error("Could not close file 0x%p", file_handle);
                 return false;
             }
         #else
@@ -811,7 +820,7 @@ namespace Sl
                 return false;
             }
             if (close(file_handle) != 0) {
-                log_error("Could not close file descriptor %d: %s", file_handle, get_error_message());
+                report_error("Could not close file descriptor %d", file_handle);
                 return false;
             }
         #endif
@@ -896,7 +905,7 @@ namespace Sl
         if (hFind != INVALID_HANDLE_VALUE)
             FindClose(hFind);
         else {
-            log_error("Could not read folder \"%s\": %s", folder_path_terminated.data, get_error_message());
+            report_error("Could not read folder \"%s\"", folder_path_terminated.data);
             folder_path_terminated.cleanup();
             return false;
         }
@@ -904,8 +913,7 @@ namespace Sl
         UNUSED(file_path);
         DIR* dir = opendir(folder_path.data);
         if (!dir) {
-            log_error("Could not read folder \"%.*s\": %s",
-                (int)folder_path.size, folder_path.data, strerror(errno));
+            report_error("Could not read folder \"" SV_FORMAT "\"", SV_ARG(folder_path));
             return false;
         }
 
@@ -915,16 +923,13 @@ namespace Sl
             struct dirent* entry = readdir(dir);
             if (!entry) {
                 if (errno != 0) {
-                    log_error("Error reading folder \"%.*s\": %s",
-                        (int)folder_path.size, folder_path.data, strerror(errno));
+                    report_error("Error reading folder \"" SV_FORMAT "\"", SV_ARG(folder_path));
                     success = false;
                 }
                 break;
             }
 
-            usize name_len = strlen(entry->d_name);
-
-            // Skip . and ..
+            const usize name_len = strlen(entry->d_name);
             if (memory_equals(entry->d_name, name_len, ".", 1)) continue;
             if (memory_equals(entry->d_name, name_len, "..", 2)) continue;
 
@@ -1063,12 +1068,12 @@ namespace Sl
                         break;
                 }
                 if (!result || bytes_read == 0) {
-                    log_error("Could not read file: %s\n", get_error_message());
+                    report_error("Could not read file");
                     return false;
                 }
                 buffer.count += bytes_read;
             } else {
-                log_error("Could not read file: %s", get_error_message());
+                report_error("Could not read file");
                 return false;
             }
         } while(file_size > 0 && buffer.count < file_size);
@@ -1087,7 +1092,7 @@ namespace Sl
                     }
                 }
                 if (bytes_read < 0) {
-                    log_error("Could not read file: %s", get_error_message());
+                    report_error("Could not read file");
                     return false;
                 }
             }
@@ -1161,17 +1166,17 @@ namespace Sl
         DWORD exit_status = EXIT_FAILURE;
 
         if (WaitForSingleObject(id, INFINITE) == WAIT_FAILED) {
-            log_error("Could not wait on process 0x%p: %s", id, get_error_message());
+            report_error("Could not wait on process 0x%p", id);
             DEFER_RETURN(false);
         }
 
         if (!GetExitCodeProcess(id, &exit_status)) {
-            log_error("Could not get exit code of process 0x%zx\n", (usize)id);
+            report_error("Could not get exit code of process 0x%zx", (usize)id);
             DEFER_RETURN(false);
         }
 
         if (exit_status != 0) {
-            log_error("Process 0x%zx exited with exit code %lu\n", (usize)id, exit_status);
+            report_error("Process 0x%zx exited with exit code %lu", (usize)id, exit_status);
             DEFER_RETURN(false);
         }
     end:
@@ -1185,19 +1190,18 @@ namespace Sl
         int exit_code;
 
         if (waitpid(id, &status, 0) < 0) {
-            log_error("Could not wait on process %d: %s", id, get_error_message());
+            report_error("Could not wait on process %d", id);
             DEFER_RETURN(false);
         }
         if (WIFEXITED(status)) {
             exit_code = WEXITSTATUS(status);
             if (exit_code != 0) {
-                printf("Process %d exited with code %d\n", id, exit_code);
-                log_error("Process %d exited with code %d\n", id, exit_code);
+                report_error("Process %d exited with code %d", id, exit_code);
                 DEFER_RETURN(false);
             }
         }
         if (WIFSIGNALED(status)) {
-            log_error("Command process was terminated by signal %d\n", WTERMSIG(status));
+            report_error("Command process was terminated by signal %d", WTERMSIG(status));
             DEFER_RETURN(false);
         }
     end:
@@ -1270,7 +1274,7 @@ namespace Sl
             success = CreateProcessA(NULL, data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
         }
         if (!success) {
-            log_error("Could not create process \"" SV_FORMAT "\": %s", (int)count, data, get_error_message());
+            report_error("Could not create process \"" SV_FORMAT "\"", (int)count, data);
             if (opt.reset_command) reset();
             return Process(INVALID_PROCESS);
         }
@@ -1278,28 +1282,28 @@ namespace Sl
     #else
         pid_t cpid = fork();
         if (cpid < 0) {
-            log_error("Could not fork child process: %s", get_error_message());
+            report_error("Could not fork child process");
             return Process();
         }
 
         if (cpid == 0) {
             if (opt.stdin_desc) {
                 if (dup2(*opt.stdin_desc, STDIN_FILENO) < 0) {
-                    log_error("Could not setup stdin for child process: %s\n", get_error_message());
+                    report_error("Could not setup stdin for child process");
                     exit(EXIT_FAILURE);
                 }
             }
 
             if (opt.stdout_desc) {
                 if (dup2(*opt.stdout_desc, STDOUT_FILENO) < 0) {
-                    log_error("Could not setup stdout for child process: %s\n", get_error_message());
+                    report_error("Could not setup stdout for child process");
                     exit(EXIT_FAILURE);
                 }
             }
 
             if (opt.stderr_desc) {
                 if (dup2(*opt.stderr_desc, STDERR_FILENO) < 0) {
-                    log_error("Could not setup stderr for child process: %s\n", get_error_message());
+                    report_error("Could not setup stderr for child process");
                     exit(EXIT_FAILURE);
                 }
             }
@@ -1321,7 +1325,7 @@ namespace Sl
             arr.push((const char*)nullptr);
 
             if (execvp(arr[0], (char * const*) arr.data) < 0) {
-                log_error("Could not exec child process for %s: %s\n", arr.get(0), get_error_message());
+                report_error("Could not exec child process for %s", arr[0]);
                 exit(EXIT_FAILURE);
             }
             UNREACHABLE("Cmd::execute");
