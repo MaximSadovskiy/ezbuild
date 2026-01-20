@@ -156,7 +156,7 @@ namespace Sl
     #define rebuild_itself(options, argc, argv, ...) Sl::rebuild_itself_args(false, (options), (argc), (argv), __FILE__, __VA_ARGS__, NULL)
     void rebuild_itself_args(bool force, ExecutableOptions options, int argc, char **argv, const char *source_path, ...);
     // If build script was rebuilt last time - returns true
-    bool was_cpp_rebuilt(int argc, char** argv);
+    bool was_script_rebuilt(int argc, char** argv);
     // Compares time of depency files with provided file. If true, that means file needs to be rebuilt
     bool file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
     // Must have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
@@ -225,6 +225,7 @@ namespace Sl
             link_libraries_paths.cleanup();
             linker_flags.cleanup();
             custom_flags.cleanup();
+            custom_arguments.cleanup();
             defines.cleanup();
         }
 
@@ -275,6 +276,8 @@ namespace Sl
         void add_cpp_flag(StrView flag);
         // Add custom linker flag (Would not be checked for validity)
         void add_linker_flag(StrView flag);
+        // Add custom argument when running already built executable
+        void add_run_argument(StrView arg);
     // This function is used during build step, they are internal, not meant to use directly.
     // But they can be usefull you need some sophisticated build step outside of this library.
         // Pushes output flag into internal buffer
@@ -301,6 +304,7 @@ namespace Sl
         Array<StrView> link_libraries_paths = {};
         Array<StrView> linker_flags = {};
         Array<StrView> custom_flags = {};
+        Array<StrView> custom_arguments = {};
         Array<StrView> defines = {};
         StrView        output_name = {"a", 1, true, false};
         bool           output_contains_ext = false;
@@ -462,7 +466,7 @@ namespace Sl
 
     bool is_file_exists(StrView file)
     {
-        ScopedLogger mute(log_muted);
+        ScopedLogger mute(logger_muted);
         FileHandle file_handle = INVALID_FILE_HANDLE;
 
         if (!open_file(file, file_handle)) return false;
@@ -497,7 +501,7 @@ namespace Sl
         UNUSED(is_wide);
         result = rename(file_from_path.data, file_to_path.data) == 0;
     #endif // !_WIN32
-        if (!result) log(LOG_ERROR, "Could not rename file \"%s\" to \"%s\": %s", file_from_path.data, file_to_path.data, get_error_message());
+        if (!result) log_error("Could not rename file \"%s\" to \"%s\": %s", file_from_path.data, file_to_path.data, get_error_message());
         return result;
     }
     s32 compare_file_time(FileTimeUnit file_time1, FileTimeUnit file_time2)
@@ -537,7 +541,7 @@ namespace Sl
             }
         #endif // !_WIN32
 
-        if (!result) log(LOG_ERROR, "Could not get time: %s", get_error_message());
+        if (!result) log_error("Could not get time: %s", get_error_message());
         return result;
     }
     bool get_file_size(FileHandle file_handle, u64& file_size_out)
@@ -558,7 +562,7 @@ namespace Sl
             }
         #endif // !_WIN32
         if (!result) {
-            log(LOG_ERROR, "Could not get size of the file: %s\n", get_error_message());
+            log_error("Could not get size of the file: %s\n", get_error_message());
             return false;
         }
         return result;
@@ -588,12 +592,12 @@ namespace Sl
                     if (!result) break;
                 }
                 if (!result || written_bytes == 0) {
-                    log(LOG_ERROR, "Could not write to file: %s", get_error_message());
+                    log_error("Could not write to file: %s", get_error_message());
                     return false;
                 }
                 total_written += written_bytes;
             } else {
-                log(LOG_ERROR, "Could not write to file: %s", get_error_message());
+                log_error("Could not write to file: %s", get_error_message());
                 return false;
             }
         } while(total_written < size);
@@ -605,7 +609,7 @@ namespace Sl
 
             ssize_t written_bytes = write(file_handle, current_data_ptr, write_size);
             if (written_bytes < 0) {
-                log(LOG_ERROR, "Could not write to file: %s", get_error_message());
+                log_error("Could not write to file: %s", get_error_message());
                 return false;
             }
             if (written_bytes == 0 && write_size > 0) {
@@ -621,7 +625,7 @@ namespace Sl
                     }
                 }
                 if (!result || written_bytes == 0) {
-                    log(LOG_ERROR, "Could not write to file: %s", get_error_message());
+                    log_error("Could not write to file: %s", get_error_message());
                     return false;
                 }
             }
@@ -691,7 +695,7 @@ namespace Sl
         #endif // _WIN32
 
         if (file_handle_out == INVALID_FILE_HANDLE) {
-            log(LOG_ERROR, "Could not create file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+            log_error("Could not create file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
             return false;
         }
         return true;
@@ -706,20 +710,20 @@ namespace Sl
         // Clear read-only attribute
         if (is_wide) {
             if (!SetFileAttributesW((LPCWSTR)file_path, FILE_ATTRIBUTE_NORMAL)) {
-                log(LOG_ERROR, "Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                log_error("Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
                 return false;
             }
             if (!DeleteFileW((LPCWSTR)file_path)) {
-                log(LOG_ERROR, "Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                log_error("Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
                 return false;
             }
         } else {
             if (!SetFileAttributesA(file_path, FILE_ATTRIBUTE_NORMAL)) {
-                log(LOG_ERROR, "Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                log_error("Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
                 return false;
             }
             if (!DeleteFileA(file_path)) {
-                log(LOG_ERROR, "Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+                log_error("Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
                 return false;
             }
         }
@@ -729,12 +733,12 @@ namespace Sl
         if (lstat(file_path, &st) == 0) {
             // Clear write permission for owner, group, and others
             if (chmod(file_path, st.st_mode | S_IWUSR | S_IWGRP | S_IWOTH) != 0) {
-                log(LOG_ERROR, "Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), strerror(errno));
+                log_error("Could not change permissions of file \"" SV_FORMAT "\": %s\n", SV_ARG(file), strerror(errno));
                 return false;
             }
         }
         if (unlink(file_path) != 0) {
-            log(LOG_ERROR, "Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
+            log_error("Could not delete file \"" SV_FORMAT "\": %s\n", SV_ARG(file), get_error_message());
             return false;
         }
     #endif // _WIN32
@@ -787,7 +791,7 @@ namespace Sl
     #endif // !_WIN32
 
         if (file_handle_out == INVALID_FILE_HANDLE) {
-            log(LOG_ERROR, "Could not open file \"%s\": %s", file_path, get_error_message());
+            log_error("Could not open file \"%s\": %s", file_path, get_error_message());
             return false;
         }
         return true;
@@ -798,16 +802,16 @@ namespace Sl
 
         #ifdef _WIN32
             if (!CloseHandle(file_handle)) {
-                log(LOG_ERROR, "Could not close file 0x%p: %s", file_handle, get_error_message());
+                log_error("Could not close file 0x%p: %s", file_handle, get_error_message());
                 return false;
             }
         #else
             if (file_handle <= 2) {  // Don't close stdin(0), stdout(1), stderr(2)
-                log(LOG_ERROR, "Cannot close standard file descriptor %d\n", file_handle);
+                log_error("Cannot close standard file descriptor %d\n", file_handle);
                 return false;
             }
             if (close(file_handle) != 0) {
-                log(LOG_ERROR, "Could not close file descriptor %d: %s", file_handle, get_error_message());
+                log_error("Could not close file descriptor %d: %s", file_handle, get_error_message());
                 return false;
             }
         #endif
@@ -892,7 +896,7 @@ namespace Sl
         if (hFind != INVALID_HANDLE_VALUE)
             FindClose(hFind);
         else {
-            log(LOG_ERROR, "Could not read folder \"%s\": %s", folder_path_terminated.data, get_error_message());
+            log_error("Could not read folder \"%s\": %s", folder_path_terminated.data, get_error_message());
             folder_path_terminated.cleanup();
             return false;
         }
@@ -900,7 +904,7 @@ namespace Sl
         UNUSED(file_path);
         DIR* dir = opendir(folder_path.data);
         if (!dir) {
-            log(LOG_ERROR, "Could not read folder \"%.*s\": %s",
+            log_error("Could not read folder \"%.*s\": %s",
                 (int)folder_path.size, folder_path.data, strerror(errno));
             return false;
         }
@@ -911,7 +915,7 @@ namespace Sl
             struct dirent* entry = readdir(dir);
             if (!entry) {
                 if (errno != 0) {
-                    log(LOG_ERROR, "Error reading folder \"%.*s\": %s",
+                    log_error("Error reading folder \"%.*s\": %s",
                         (int)folder_path.size, folder_path.data, strerror(errno));
                     success = false;
                 }
@@ -942,13 +946,9 @@ namespace Sl
                     type = FileType::OTHER;
                 }
 
-                StrView file_name = {
-                    full_path.data + folder_path.size + (folder_path.ends_with("/") ? 0 : 1),
-                    name_len,
-                    true,  // null-terminated
-                    false  // not wide
-                };
-                files_out.push(file_name, type);
+                auto file_name_ptr = full_path.data + folder_path.size + (folder_path.ends_with("/") ? 0 : 1);
+                auto* file_name = memory_duplicate(*get_global_allocator(), file_name_ptr, name_len);
+                files_out.push(FileEntry(StrView{(const char*)file_name, name_len}, type));
             } else {
                 // Failed to stat, treat as normal file
                 StrView file_name = {
@@ -1063,12 +1063,12 @@ namespace Sl
                         break;
                 }
                 if (!result || bytes_read == 0) {
-                    log(LOG_ERROR, "Could not read file: %s\n", get_error_message());
+                    log_error("Could not read file: %s\n", get_error_message());
                     return false;
                 }
                 buffer.count += bytes_read;
             } else {
-                log(LOG_ERROR, "Could not read file: %s", get_error_message());
+                log_error("Could not read file: %s", get_error_message());
                 return false;
             }
         } while(file_size > 0 && buffer.count < file_size);
@@ -1087,7 +1087,7 @@ namespace Sl
                     }
                 }
                 if (bytes_read < 0) {
-                    log(LOG_ERROR, "Could not read file: %s", get_error_message());
+                    log_error("Could not read file: %s", get_error_message());
                     return false;
                 }
             }
@@ -1161,17 +1161,17 @@ namespace Sl
         DWORD exit_status = EXIT_FAILURE;
 
         if (WaitForSingleObject(id, INFINITE) == WAIT_FAILED) {
-            log(LOG_ERROR, "Could not wait on process 0x%p: %s", id, get_error_message());
+            log_error("Could not wait on process 0x%p: %s", id, get_error_message());
             DEFER_RETURN(false);
         }
 
         if (!GetExitCodeProcess(id, &exit_status)) {
-            log(LOG_ERROR, "Could not get exit code of process 0x%zx\n", (usize)id);
+            log_error("Could not get exit code of process 0x%zx\n", (usize)id);
             DEFER_RETURN(false);
         }
 
         if (exit_status != 0) {
-            log(LOG_ERROR, "Process 0x%zx exited with exit code %lu\n", (usize)id, exit_status);
+            log_error("Process 0x%zx exited with exit code %lu\n", (usize)id, exit_status);
             DEFER_RETURN(false);
         }
     end:
@@ -1183,21 +1183,21 @@ namespace Sl
     #else
         int status;
         int exit_code;
-        if (id <= 0) {
-            DEFER_RETURN(false);
-        }
 
         if (waitpid(id, &status, 0) < 0) {
-            log(LOG_ERROR, "Could not wait on process %d: %s", id, get_error_message());
+            log_error("Could not wait on process %d: %s", id, get_error_message());
             DEFER_RETURN(false);
         }
-        if (!WIFEXITED(status)) {
-            log(LOG_ERROR, "Process %d did not exit normally\n", id);
-            DEFER_RETURN(false);
+        if (WIFEXITED(status)) {
+            exit_code = WEXITSTATUS(status);
+            if (exit_code != 0) {
+                printf("Process %d exited with code %d\n", id, exit_code);
+                log_error("Process %d exited with code %d\n", id, exit_code);
+                DEFER_RETURN(false);
+            }
         }
-        exit_code = WEXITSTATUS(status);
-        if (exit_code != 0) {
-            log(LOG_ERROR, "Process %d exited with code %d\n", id, exit_code);
+        if (WIFSIGNALED(status)) {
+            log_error("Command process was terminated by signal %d\n", WTERMSIG(status));
             DEFER_RETURN(false);
         }
     end:
@@ -1229,19 +1229,19 @@ namespace Sl
             if (opt.stderr_desc) startInfo.hStdInput = *opt.stderr_desc;
             else {
                 startInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-                if (startInfo.hStdInput == INVALID_HANDLE_VALUE) log(LOG_WARNING, "Could not get STD_INPUT_HANDLE\n");
+                if (startInfo.hStdInput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_INPUT_HANDLE\n");
             }
 
             if (opt.stdout_desc) startInfo.hStdOutput = *opt.stdout_desc;
             else {
                 startInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-                if (startInfo.hStdOutput == INVALID_HANDLE_VALUE) log(LOG_WARNING, "Could not get STD_OUTPUT_HANDLE\n");
+                if (startInfo.hStdOutput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_OUTPUT_HANDLE\n");
             }
 
             if (opt.stdin_desc) startInfo.hStdError = *opt.stdin_desc;
             else {
                 startInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-                if (startInfo.hStdError == INVALID_HANDLE_VALUE) log(LOG_WARNING, "Could not get STD_ERROR_HANDLE\n");
+                if (startInfo.hStdError == INVALID_HANDLE_VALUE) log_warning("Could not get STD_ERROR_HANDLE\n");
             }
             startInfo.dwFlags = STARTF_USESTDHANDLES;
             success = CreateProcessW(NULL, (LPWSTR)utf8_to_utf16_windows(data).data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
@@ -1252,25 +1252,25 @@ namespace Sl
             if (opt.stderr_desc) startInfo.hStdInput = *opt.stderr_desc;
             else {
                 startInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-                if (startInfo.hStdInput == INVALID_HANDLE_VALUE) log(LOG_WARNING, "Could not get STD_INPUT_HANDLE\n");
+                if (startInfo.hStdInput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_INPUT_HANDLE\n");
             }
 
             if (opt.stdout_desc) startInfo.hStdOutput = *opt.stdout_desc;
             else {
                 startInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-                if (startInfo.hStdOutput == INVALID_HANDLE_VALUE) log(LOG_WARNING, "Could not get STD_OUTPUT_HANDLE\n");
+                if (startInfo.hStdOutput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_OUTPUT_HANDLE\n");
             }
 
             if (opt.stdin_desc) startInfo.hStdError = *opt.stdin_desc;
             else {
                 startInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-                if (startInfo.hStdError == INVALID_HANDLE_VALUE) log(LOG_WARNING, "Could not get STD_ERROR_HANDLE\n");
+                if (startInfo.hStdError == INVALID_HANDLE_VALUE) log_warning("Could not get STD_ERROR_HANDLE\n");
             }
             startInfo.dwFlags = STARTF_USESTDHANDLES;
             success = CreateProcessA(NULL, data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
         }
         if (!success) {
-            log(LOG_ERROR, "Could not create process \"" SV_FORMAT "\": %s", (int)count, data, get_error_message());
+            log_error("Could not create process \"" SV_FORMAT "\": %s", (int)count, data, get_error_message());
             if (opt.reset_command) reset();
             return Process(INVALID_PROCESS);
         }
@@ -1303,24 +1303,25 @@ namespace Sl
                     exit(EXIT_FAILURE);
                 }
             }
-            s64 size_out;
+            usize size_out;
             StrView data_view(data, count);
-            Array<const char*> arr(get_global_allocator());
+            Allocator* alloc = get_global_allocator();
+            Array<const char*> arr = {alloc};
             do {
                 // @TODO linux is retarded
                 auto index = data_view.find_first_occurrence_char(' ');
                 if (index == StrView::INVALID_INDEX) {
-                    arr.push((const char*)memory_format(*get_global_allocator(), size_out, SV_FORMAT, SV_ARG(data_view)));
+                    arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(data_view)));
                     break;
                 }
                 auto arg = data_view.chop_left(index);
                 data_view.chop_left(1);
-                arr.push((const char*)memory_format(*get_global_allocator(), size_out, "" SV_FORMAT, SV_ARG(arg)));
+                arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(arg)));
             } while(data_view.size > 0);
-
             arr.push((const char*)nullptr);
-            if (execvp(arr.get(0), (char * const*) arr.data) < 0) {
-                log_error("Could not exec child process for %s: %s", arr.get(0), get_error_message());
+
+            if (execvp(arr[0], (char * const*) arr.data) < 0) {
+                log_error("Could not exec child process for %s: %s\n", arr.get(0), get_error_message());
                 exit(EXIT_FAILURE);
             }
             UNREACHABLE("Cmd::execute");
@@ -1571,6 +1572,11 @@ namespace Sl
         linker_flags.push(flag);
     }
 
+    void Cmd::add_run_argument(StrView arg)
+    {
+        custom_arguments.push(arg);
+    }
+
     void Cmd::add_library_path(StrView path)
     {
         link_libraries_paths.push(path);
@@ -1665,6 +1671,7 @@ namespace Sl
 
         if (append_flag)
             push_flag_output(compiler);
+        // @TODO fix bug, if output_name doesnt start with "./" then it wont run in lipux
         append(output_name.data, output_name.size);
     #if defined(_WIN32)
         if (!output_contains_ext) {
@@ -1698,7 +1705,11 @@ namespace Sl
         }
         // return true;
         StrBuilder buffer(get_global_allocator());
-        if (!read_entire_file(depency, buffer)) return false;
+        if (!read_entire_file(depency, buffer)) {
+            close_file(depency);
+            return false;
+        }
+        close_file(depency);
         auto view = buffer.to_string_view();
         StrView start_dep_str = "";
         char end_dep_str;
@@ -1748,12 +1759,14 @@ namespace Sl
             do {
                 auto end_dep = temp_view.find_first_occurrence_char(end_dep_str);
                 if (end_dep == StrView::INVALID_INDEX) {
-                    temp_view.trim();
-                    temp_view.trim_left_char('\\');
-                    temp_view.trim_right_char('\n');
-                    temp_view.trim_right_char('\r');
-                    temp_view.trim_right_char('\\');
-                    if (temp_view.size > 0) depencies_out.push(temp_view);
+                    view.trim();
+                    view.trim_left_char('\\');
+                    view.trim_left_char('\n');
+                    view.trim_left_char('\r');
+                    view.trim_right_char('\n');
+                    view.trim_right_char('\r');
+                    view.trim_right_char('\\');
+                    if (view.size > 0) depencies_out.push(view);
                     break;
                 }
                 if (temp_view.data[end_dep - 1] == '\\') {
@@ -1849,9 +1862,12 @@ namespace Sl
     static StrView strip_cpp_postfix(StrView file)
     {
         auto cpp_index = file.find_last_occurrence_word(".cpp");
-        if (cpp_index == StrView::INVALID_INDEX) cpp_index = file.find_last_occurrence_word(".cpp");
-        if (cpp_index != StrView::INVALID_INDEX)
+        if (cpp_index == StrView::INVALID_INDEX) {
+            cpp_index = file.find_last_occurrence_word(".c");
+        }
+        if (cpp_index != StrView::INVALID_INDEX) {
             file.chop_right(file.size - cpp_index);
+        }
         return file;
     }
 
@@ -1899,7 +1915,7 @@ namespace Sl
                 const auto dependency_path = output_file_object.to_string_view(true);
                 bool need_to_recreate_dependency_file = true;
                 {
-                    ScopedLogger _(log_muted);
+                    ScopedLogger _(logger_muted);
                     if (is_file_exists(dependency_path)) {
                         FileHandle dependency_file;
                         if (open_file(dependency_path, dependency_file)) {
@@ -1927,7 +1943,7 @@ namespace Sl
                     else
                         append("-M ");
                     append(file.data, file.size);
-                    ScopedLogger _(log_muted);
+                    ScopedLogger _(logger_muted);
                     if (!execute(options).wait()) return false;
                     close_file(dependency_file);
                 }
@@ -1946,7 +1962,7 @@ namespace Sl
                         append("-c ");
                     append(file.data, file.size);
                     needs_to_rebuilt = true;
-                    log(LOG_INFO, "Rebuilding: " SV_FORMAT "\n", SV_ARG(file));
+                    log_info("Rebuilding: " SV_FORMAT "\n", SV_ARG(file));
                     append(' ');
                     push_flag_output(compiler, true);
                     append(output_file_object_path);
@@ -1975,12 +1991,12 @@ namespace Sl
                     append(' ');
                 }
                 append_linker_flags(compiler);
-                log(LOG_INFO, "Linking executable...\n");
+                log_info("Linking executable...\n");
                 result = execute().wait();
             } else {
                 count = 0;
                 result = true;
-                log(LOG_INFO, "Everything is up to date\n");
+                log_info("Everything is up to date\n");
             }
         }
         else {
@@ -1994,16 +2010,18 @@ namespace Sl
                 append(' ');
             }
             append_linker_flags(compiler);
-            log(LOG_INFO, "Linking executable...\n");
+            log_info("Linking executable...\n");
             result = execute().wait();
         }
         if (result && run) {
             count = 0;
             append_output_name(compiler, false);
-            log(LOG_INFO, "Running: " SB_FORMAT "\n", (int)count, data);
-            append("EZBUILD_REBUILT");
-
-            ScopedLogger mute(log_muted);
+            log_info("Running: " SB_FORMAT "\n", (int)count, data);
+            for (auto& arg : custom_arguments) {
+                append(arg);
+                append(' ');
+            }
+            trim();
             execute().wait();
         }
         clear();
@@ -2020,6 +2038,7 @@ namespace Sl
         link_libraries_paths.count = 0;
         linker_flags.count = 0;
         custom_flags.count = 0;
+        custom_arguments.count = 0;
         defines.count = 0;
         output_contains_ext = false;
         incremental_build = true;
@@ -2028,7 +2047,7 @@ namespace Sl
 
     void Cmd::print()
     {
-        log(LOG_INFO, "CMD: " SV_FORMAT "\n", static_cast<int>(count), data);
+        log_info("CMD: " SV_FORMAT "\n", static_cast<int>(count), data);
     }
 
     FlagsCompiler get_compiler()
@@ -2120,7 +2139,7 @@ namespace Sl
     #if defined(_WIN32)
         static const char* errorMsg[EZBUILD_ERROR_MESSAGE_SIZE] = {0};
         if (error == 0) {
-            log(LOG_ERROR, "Could not get error message\n");
+            log_error("Could not get error message\n");
             return nullptr;
         } else {
             auto msgSize = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
@@ -2131,7 +2150,7 @@ namespace Sl
                                            EZBUILD_ERROR_MESSAGE_SIZE - 1,
                                            NULL);
             if (msgSize == 0) {
-                log(LOG_ERROR, "Could not format error message\n");
+                log_error("Could not format error message\n");
                 return nullptr;
             }
             return (const char*)errorMsg;
@@ -2155,7 +2174,7 @@ namespace Sl
         }
     }
 
-    static void fix_windows_exe_bs(StrView& executable_name)
+    inline static void fix_windows_exe_bs(StrView& executable_name)
     {
         // This function needed, because in windows you can call a executable without its extension
         #ifdef _WIN32
@@ -2168,10 +2187,12 @@ namespace Sl
                 auto* exec = new_str.to_cstring_alloc();
                 executable_name = StrView(exec, new_str.count, true, false);
             }
+        #else
+            UNUSED(executable_name);
         #endif // !_WIN32
     }
 
-    bool was_cpp_rebuilt(int argc, char** argv)
+    bool was_script_rebuilt(int argc, char** argv)
     {
         if (argv == nullptr) return false;
 
@@ -2227,8 +2248,9 @@ namespace Sl
         old_binary_path.append_null(false);
         auto old_binary_path_view = old_binary_path.to_string_view(true);
 
-        if (!rename_file(executable_name, old_binary_path_view))
+        if (!rename_file(executable_name, old_binary_path_view)) {
             exit(EXIT_FAILURE);
+        }
 
         options.is_cpp = true;
         options.incremental_build = false;
@@ -2250,11 +2272,12 @@ namespace Sl
         #endif // _WIN32
     #else
         // If not debug, we mute old ezbuild trace
-        ScopedLogger _(log_muted);
+        ScopedLogger _(logger_muted);
     #endif
         cmd.start_cpp(options);
         cmd.add_source_file(source_path);
         cmd.output_file(executable_name, true);
+        cmd.add_run_argument("EZBUILD_REBUILT");
         bool run = true;
         if (!cmd.build(run)) {
             rename_file(old_binary_path_view, executable_name);

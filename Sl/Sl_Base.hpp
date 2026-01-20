@@ -18,8 +18,8 @@ namespace Sl
     bool memory_equals(const void* ptr1, usize ptr1_size, const void* ptr2, usize ptr2_size) noexcept;
     usize memory_strlen(const char* ptr) noexcept;
     usize memory_wstrlen(const wchar_t* ptr) noexcept; // returns size in bytes
-    void* memory_format(Allocator& allocator, s64& size_out, const char* format, ...) noexcept SL_PRINTF_FORMATER(3, 4);
-    void* memory_format(Allocator& allocator, s64& size_out, const char* format, va_list args) noexcept;
+    void* memory_format(Allocator& allocator, usize& size_out, const char* format, ...) noexcept SL_PRINTF_FORMATER(3, 4);
+    void* memory_format(Allocator& allocator, usize& size_out, const char* format, va_list args) noexcept;
     void* memory_duplicate(Allocator& allocator, const void* ptr) noexcept; // also puts NULL at the end
     void* memory_duplicate(Allocator& allocator, const void* ptr, usize size) noexcept;
 } // namespace Sl
@@ -102,21 +102,23 @@ namespace Sl
         return len;
     }
 
-    void* memory_format(Allocator& allocator, s64& size_out, const char* format, va_list args) noexcept
+    void* memory_format(Allocator& allocator, usize& size_out, const char* format, va_list args) noexcept
     {
         void* ptr = nullptr;
         if (format == nullptr) return ptr;
 
-        size_out = vsnprintf(nullptr, 0, format, args);
+        va_list args_copy;
+        va_copy(args_copy, args);
+            size_out = vsnprintf(nullptr, 0, format, args_copy);
+        va_end(args_copy);
         if (size_out > 0) {
             ptr = allocator.allocate(size_out + 1);
-            size_out = vsnprintf((char*) ptr, size_out, format, args);
-            ((char*)ptr)[size_out] = '\0';
+            size_out = vsnprintf((char*) ptr, size_out + 1, format, args);
         }
         return ptr;
     }
 
-    void* memory_format(Allocator& allocator, s64& size_out, const char* format, ...) noexcept
+    void* memory_format(Allocator& allocator, usize& size_out, const char* format, ...) noexcept
     {
         va_list args;
         va_start(args, format);

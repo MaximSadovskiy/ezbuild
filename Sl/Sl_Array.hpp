@@ -2,18 +2,19 @@
 #define SL_ARRAY_H
 
 #include "Sl_Defines.hpp"
+#include <utility>
 
 namespace Sl
 {
     struct Allocator;
 
-    template <typename T, bool cpp_compliant_and_slow = ARRAY_CPP_COMPLIANT>
+    template <typename T, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
     struct Array
     {
         T* data;
         usize capacity;
         usize count;
-        Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of ARRAY_REALLOC
+        Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of SL_ARRAY_REALLOC
 
         static const usize INVALID_INDEX = -1;
 
@@ -133,7 +134,7 @@ namespace Sl
                 if (_allocator)
                     data = (T*)_allocator->reallocate(data, old_capacity * ALIGNMENT(sizeof(T), alignof(T)), capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 else
-                    data = (T*)ARRAY_REALLOC(data, capacity * ALIGNMENT(sizeof(T), alignof(T)));
+                    data = (T*)SL_ARRAY_REALLOC(data, capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 ASSERT_DEBUG(data != nullptr);
             }
         }
@@ -144,7 +145,7 @@ namespace Sl
                 if (_allocator)
                     data = (T*)_allocator->reallocate(data, capacity * ALIGNMENT(sizeof(T), alignof(T)), needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 else
-                    data = (T*)ARRAY_REALLOC(data, needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
+                    data = (T*)SL_ARRAY_REALLOC(data, needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 capacity = needed_capacity;
                 ASSERT_DEBUG(data != nullptr);
                 IF_CONSTEXPR (cpp_compliant_and_slow) {
@@ -157,7 +158,7 @@ namespace Sl
                 if (_allocator)
                     new_data = (T*)_allocator->allocate(needed_capacity_bytes);
                 else
-                    new_data = (T*)ARRAY_REALLOC(nullptr, needed_capacity_bytes);
+                    new_data = (T*)SL_ARRAY_REALLOC(nullptr, needed_capacity_bytes);
                 ASSERT_DEBUG(new_data != nullptr);
                 const auto new_count = needed_capacity < count ? needed_capacity : count;
                 IF_CONSTEXPR (cpp_compliant_and_slow) {
@@ -169,7 +170,7 @@ namespace Sl
                     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
                     memory_copy((void*)new_data, needed_capacity_bytes, (void*)data, needed_capacity_bytes);
                 }
-                if (!_allocator) ARRAY_FREE(data);
+                if (!_allocator) SL_ARRAY_FREE(data);
                 data = new_data;
                 capacity = needed_capacity;
                 count = new_count;
@@ -194,7 +195,7 @@ namespace Sl
         void cleanup() noexcept
         {
             clear();
-            if (!_allocator) ARRAY_FREE(data);
+            if (!_allocator) SL_ARRAY_FREE(data);
             data = nullptr;
             capacity = 0;
         }
@@ -256,21 +257,21 @@ namespace Sl
         }
     };
 
-    // * Uses LOCAL_ARRAY_INITIAL_SIZE stack storage initially.
+    // * Uses SL_LOCAL_ARRAY_INIT_SIZE stack storage initially.
     // * This allows to speed it up on small scale sizes.
     // * Allocates heap/custom allocator when exceeded.
-    static_assert((LOCAL_ARRAY_INITIAL_SIZE) > 0ll, "Provide correct size");
+    static_assert(SL_LOCAL_ARRAY_INIT_SIZE > 0ll, "Provide correct size");
 
     template<typename T>
     class LocalArray
     {
     private:
         T* _data;
-        alignas(alignof(T)) u8 _storage[LOCAL_ARRAY_INITIAL_SIZE * sizeof(T)];
+        alignas(alignof(T)) u8 _storage[SL_LOCAL_ARRAY_INIT_SIZE * sizeof(T)];
         usize _count;
         usize _allocated_capacity;
-        bool _is_heap_allocated; // True if allocated with ARRAY_REALLOC or Allocator
-        Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of ARRAY_REALLOC
+        bool _is_heap_allocated; // True if allocated with SL_ARRAY_REALLOC or Allocator
+        Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of SL_ARRAY_REALLOC
     public:
         LocalArray(Allocator* allocator = nullptr)
         {
@@ -289,15 +290,15 @@ namespace Sl
         template<typename... Args>
         void push(Args&&... args) noexcept
         {
-            if (_count + 1 > LOCAL_ARRAY_INITIAL_SIZE && !is_heap_allocated()) {
+            if (_count + 1 > SL_LOCAL_ARRAY_INIT_SIZE && !is_heap_allocated()) {
                  _is_heap_allocated = true;
-                _allocated_capacity = LOCAL_ARRAY_INITIAL_SIZE * 2;
+                _allocated_capacity = SL_LOCAL_ARRAY_INIT_SIZE * 2;
                 T* new_data;
                 if (_allocator)
                     new_data = (T*)_allocator->allocate(size_of_t() * _allocated_capacity);
                 else
-                    new_data = (T*)ARRAY_REALLOC(nullptr, size_of_t() * _allocated_capacity);
-                memory_copy(new_data, size_of_t() * LOCAL_ARRAY_INITIAL_SIZE, _data, size_of_t() * LOCAL_ARRAY_INITIAL_SIZE);
+                    new_data = (T*)SL_ARRAY_REALLOC(nullptr, size_of_t() * _allocated_capacity);
+                memory_copy(new_data, size_of_t() * SL_LOCAL_ARRAY_INIT_SIZE, _data, size_of_t() * SL_LOCAL_ARRAY_INIT_SIZE);
                 _data = new_data;
             } else if (_count + 1 > _allocated_capacity && is_heap_allocated()) {
                 resize(_count + 1);
@@ -333,7 +334,7 @@ namespace Sl
                 if (_allocator)
                     _data = (T*)_allocator->reallocate(_data, old_capacity * size_of_t(), _allocated_capacity * size_of_t());
                 else
-                    _data = (T*)ARRAY_REALLOC(_data, _allocated_capacity * size_of_t());
+                    _data = (T*)SL_ARRAY_REALLOC(_data, _allocated_capacity * size_of_t());
                 ASSERT_DEBUG(_data != nullptr);
             }
         }
@@ -384,7 +385,7 @@ namespace Sl
         {
             clear();
             if (is_heap_allocated()) {
-                if (_allocator == nullptr) ARRAY_FREE(_data);
+                if (_allocator == nullptr) SL_ARRAY_FREE(_data);
                 _data = (T*) &_storage;
                 _is_heap_allocated = false;
             }
@@ -397,7 +398,7 @@ namespace Sl
             if (is_heap_allocated())
                 size *= _allocated_capacity;
             else
-                size *= LOCAL_ARRAY_INITIAL_SIZE;
+                size *= SL_LOCAL_ARRAY_INIT_SIZE;
             memory_zero(_data, size);
         }
     // ----------------------------------------------

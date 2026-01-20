@@ -16,8 +16,8 @@ namespace Sl
     };
 
     // call this functions
-    void log(LogLevel level, const char* const format, ...) SL_PRINTF_FORMATER(2, 3);
-    void log_empty(const char* const format, ...) SL_PRINTF_FORMATER(1, 2);
+    void log(const char* const format, ...) SL_PRINTF_FORMATER(1, 2); // LOG_EMPTY
+    void log_level(LogLevel level, const char* const format, ...) SL_PRINTF_FORMATER(2, 3);
     void log_trace(const char* const format, ...) SL_PRINTF_FORMATER(1, 2);
     void log_info(const char* const format, ...) SL_PRINTF_FORMATER(1, 2);
     void log_warning(const char* const format, ...) SL_PRINTF_FORMATER(1, 2);
@@ -30,9 +30,9 @@ namespace Sl
 
     // Here's already implemented log function.
     // You can still create a custom one, and then set it using: log_set_current(your_log_function)
-    void log_default(LogLevel level, const char* const format, va_list args);
-    void log_colored(LogLevel level, const char* const format, va_list args);
-    void log_muted(LogLevel level, const char* const format, va_list args);
+    void logger_default(LogLevel level, const char* const format, va_list args);
+    void logger_colored(LogLevel level, const char* const format, va_list args);
+    void logger_muted(LogLevel level, const char* const format, va_list args);
 
     // Useful for changing log for current scope, for example: if you want to mute logger.
     struct ScopedLogger
@@ -52,9 +52,9 @@ namespace Sl
 #ifdef SL_IMPLEMENTATION
 namespace Sl
 {
-    static SL_THREAD_LOCAL Logger_handler logger_handler = log_default;
+    static SL_THREAD_LOCAL Logger_handler logger_handler = logger_default;
 
-    void log(LogLevel level, const char* const format, ...)
+    void log_level(LogLevel level, const char* const format, ...)
     {
         va_list args;
         va_start(args, format);
@@ -64,7 +64,7 @@ namespace Sl
 
     void log_set_current(Logger_handler log)
     {
-         logger_handler = log;
+        logger_handler = log;
     }
 
     Logger_handler log_get_current()
@@ -72,62 +72,62 @@ namespace Sl
         return logger_handler;
     }
 
-    void log_default(LogLevel level, const char* const format, va_list args)
+    void logger_default(LogLevel level, const char* const format, va_list args)
     {
         switch (level)
         {
             case LOG_TRACE:
-                printf("[TRACE] ");
+                fprintf(stdout, "[TRACE] ");
                 break;
             case LOG_INFO:
-                printf("[INFO] ");
+                fprintf(stdout, "[INFO] ");
                 break;
             case LOG_WARNING:
-                printf("[WARNING] ");
+                fprintf(stdout, "[WARNING] ");
                 break;
             case LOG_ERROR:
-                printf("[ERROR] ");
+                fprintf(stdout, "[ERROR] ");
                 break;
             case LOG_EMPTY: break;
             case LOG_DISABLE: return;
-            default: UNREACHABLE("log_default");
+            default: UNREACHABLE("logger_default");
         }
-        vprintf(format, args);
+        vfprintf(stdout, format, args);
     }
 
-    void log_colored(LogLevel level, const char* const format, va_list args)
+    void logger_colored(LogLevel level, const char* const format, va_list args)
     {
         switch (level)
         {
             case LOG_TRACE:
-                printf("\x1b[36m[TRACE] ");
+                fprintf(stdout, "\x1b[36m[TRACE] ");
                 break;
             case LOG_INFO:
-                printf("\x1b[94m[INFO] ");
+                fprintf(stdout, "\x1b[94m[INFO] ");
                 break;
             case LOG_WARNING:
-                printf("\x1b[33m[WARNING] ");
+                fprintf(stdout, "\x1b[33m[WARNING] ");
                 break;
             case LOG_ERROR:
-                printf("\x1b[31m[ERROR] ");
+                fprintf(stdout, "\x1b[31m[ERROR] ");
                 break;
             case LOG_EMPTY: break;
             case LOG_DISABLE: return;
-            default: UNREACHABLE("log_colored");
+            default: UNREACHABLE("logger_colored");
         }
 
-        vprintf(format, args);
+        vfprintf(stdout, format, args);
         printf("\x1b[0m");
     }
 
-    void log_muted(LogLevel level, const char* const format, va_list args)
+    void logger_muted(LogLevel level, const char* const format, va_list args)
     {
         UNUSED(level);
         UNUSED(format);
         UNUSED(args);
     }
 
-    void log_empty(const char* const format, ...)
+    void log(const char* const format, ...)
     {
         va_list args;
         va_start(args, format);

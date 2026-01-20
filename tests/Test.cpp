@@ -1,6 +1,6 @@
 #define EZBUILD_DEBUG
 #define EZBUILD_IMPLEMENTATION
-#define ARRAY_CPP_COMPLIANT false
+#define SL_ARRAY_CPP_COMPLIANT false
 #include "../ezbuild.hpp"
 
 using namespace Sl;

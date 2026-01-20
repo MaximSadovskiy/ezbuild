@@ -33,7 +33,7 @@ namespace Sl
         bool equals(StrView sv) const noexcept;
         bool starts_with(StrView prefix) const noexcept;
         bool ends_with(StrView suffix) const noexcept;
-        bool split_by_char(Array<StrView>& arr, char ch) const noexcept;
+        bool split_by_char(LocalArray<StrView>& arr, char ch) const noexcept;
         usize find_first_occurrence_char(char ch) const noexcept;
         usize find_first_occurrence_char_until(char ch, char until) const noexcept;
         usize find_last_occurrence_char(char ch) const noexcept;
@@ -122,7 +122,7 @@ namespace Sl
         return index;
     }
 
-    bool StrView::split_by_char(Array<StrView>& arr, char ch) const noexcept
+    bool StrView::split_by_char(LocalArray<StrView>& arr, char ch) const noexcept
     {
         // @TODO Garbage implementation, need to implement using iterators
         arr.clear();
@@ -136,7 +136,7 @@ namespace Sl
                 start = i + 1;
             }
         }
-        return arr.count > 0;
+        return arr.count() > 0;
     }
 
 

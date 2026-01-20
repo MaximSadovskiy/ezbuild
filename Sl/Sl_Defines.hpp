@@ -2,13 +2,14 @@
 #define SL_DEFINES_H
 
 #include <stdlib.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
 // You can config this values
 // By defining macro before including Sl.h
 //  for example:
-// # define ALLOCATOR_MALLOC(size) my_custom_malloc(size)
+// # define SL_ALLOCATOR_MALLOC(size) my_custom_malloc(size)
 // # include "Sl.h"
 //
 //--------------------------
@@ -22,43 +23,37 @@
 //  Array<YourType, false> arr = {};
 //  arr.cleanup(); // <--- won't call destructor
 // This feature is needed, if you don't care about ownership of the Type
-#ifndef ARRAY_CPP_COMPLIANT
-#   define ARRAY_CPP_COMPLIANT true
-#endif // ARRAY_CPP_COMPLIANT
+#ifndef SL_ARRAY_CPP_COMPLIANT
+#   define SL_ARRAY_CPP_COMPLIANT true
+#endif // SL_ARRAY_CPP_COMPLIANT
 
-#ifndef ARRAY_REALLOC
-#   define ARRAY_REALLOC(ptr, size) realloc((ptr), (size))
-#endif // ARRAY_REALLOC
-#ifndef ARRAY_FREE
-#   define ARRAY_FREE(ptr) free((ptr))
-#endif // ARRAY_FREE
+#ifndef SL_ARRAY_REALLOC
+#   define SL_ARRAY_REALLOC(ptr, size) realloc((ptr), (size))
+#endif // SL_ARRAY_REALLOC
+#ifndef SL_ARRAY_FREE
+#   define SL_ARRAY_FREE(ptr) free((ptr))
+#endif // SL_ARRAY_FREE
 
 // Set initial size of local array.
 //  If size was excedeed, it will allocate more with ARRAY_REALLOC or Allocator
-#ifndef LOCAL_ARRAY_INITIAL_SIZE
-#define LOCAL_ARRAY_INITIAL_SIZE 16
-#endif // LOCAL_ARRAY_INITIAL_SIZE
+#ifndef SL_LOCAL_ARRAY_INIT_SIZE
+#define SL_LOCAL_ARRAY_INIT_SIZE 16
+#endif // SL_LOCAL_ARRAY_INIT_SIZE
 
-#ifndef ALLOCATOR_MALLOC
-#   define ALLOCATOR_MALLOC(size) malloc((size))
-#endif // ALLOCATOR_MALLOC
-#ifndef ALLOCATOR_FREE
-#   define ALLOCATOR_FREE(ptr) free((ptr))
-#endif // ALLOCATOR_FREE
+#ifndef SL_ALLOCATOR_MALLOC
+#   define SL_ALLOCATOR_MALLOC(size) malloc((size))
+#endif // SL_ALLOCATOR_MALLOC
+#ifndef SL_ALLOCATOR_FREE
+#   define SL_ALLOCATOR_FREE(ptr) free((ptr))
+#endif // SL_ALLOCATOR_FREE
 
-// 0 == No alignment
-#ifndef ALLOCATOR_DEFAULT_ALIGNMENT
-#   define ALLOCATOR_DEFAULT_ALIGNMENT (sizeof(void*))
-#endif // ALLOCATOR_DEFAULT_ALIGNMENT
+#ifndef SL_GLOBAL_ALLOCATOR_INIT_SIZE
+#   define SL_GLOBAL_ALLOCATOR_INIT_SIZE (1024 * 64)
+#endif // SL_GLOBAL_ALLOCATOR_INIT_SIZE
 
-// Initial size of global allocator (allocator can grow)
-#ifndef GLOBAL_ALLOCATOR_INITIAL_SIZE
-#   define GLOBAL_ALLOCATOR_INITIAL_SIZE (1024 * 64)
-#endif // GLOBAL_ALLOCATOR_INITIAL_SIZE
-
-#ifndef ALLOCATOR_INITIAL_SIZE
-#   define ALLOCATOR_INITIAL_SIZE (1024 * 4)
-#endif // ALLOCATOR_INITIAL_SIZE
+#ifndef SL_ALLOCATOR_INIT_SIZE
+#   define SL_ALLOCATOR_INIT_SIZE (1024 * 4)
+#endif // SL_ALLOCATOR_INIT_SIZE
 
 //---------------------------
 
@@ -76,7 +71,7 @@
 
 #ifndef SL_PRINTF_FORMATER
 #   if defined(__GNUC__) || defined(__clang__)
-#       define SL_PRINTF_FORMATER(fmt, args) __attribute__((format(printf, fmt, args)));
+#       define SL_PRINTF_FORMATER(fmt, args) __attribute__((format(printf, fmt, args)))
 #   else
 #       define SL_PRINTF_FORMATER(fmt, args) // msvc...
 #   endif
@@ -124,6 +119,7 @@
 #           define SL_THREAD_LOCAL __thread
 #       endif
 #   else
+#       warning "Cannot set SL_THREAD_LOCAL"
 #       define SL_THREAD_LOCAL
 #   endif
 #endif // SL_THREAD_LOCAL

@@ -54,21 +54,21 @@ bool read_folder_example(const char* folder_path)
 
 bool colored_logger_example()
 {
-    ScopedLogger _(log_colored);
+    ScopedLogger _(logger_colored);
 
     int count = 0;
     printf("Colored logger example:\n");
-    log_empty("  "); log_trace("Trace message! %d\n", ++count);
-    log_empty("  "); log_info("Info message! %d\n", ++count);
-    log_empty("  "); log_warning("Warning message! %d\n", ++count);
-    log_empty("  "); log_error("Error message! %d\n", ++count);
+    log("  "); log_trace("Trace message! %d\n", ++count);
+    log("  "); log_info("Info message! %d\n", ++count);
+    log("  "); log_warning("Warning message! %d\n", ++count);
+    log("  "); log_error("Error message! %d\n", ++count);
 
     return true;
 }
 
 bool check_flags(const char* flag_str)
 {
-    ScopedLogger mute(log_muted);
+    ScopedLogger mute(logger_muted);
     printf("flag %s is%s supported\n", flag_str, is_flag_supported_cpp(flag_str) ? "" : " not");
 
     Array<StrView> flags = {};
@@ -95,7 +95,7 @@ bool build_cpp(Cmd& cmd, bool force_rebuilt)
     cmd.add_source_file("Test33.cpp");
     DISABLE cmd.add_source_file("Test333.cpp");
 
-    ScopedLogger _(log_colored);
+    ScopedLogger _(logger_colored);
     bool run = true;
     return cmd.build(run, force_rebuilt);
 }
@@ -107,8 +107,7 @@ int main(int argc, char **argv)
                         .warnings = FlagsWarning::ALL_FATAL,
                         .std = FlagsSTD::CPP20
                     }), argc, argv, "../ezbuild.hpp");
-    bool force_rebuilt = was_cpp_rebuilt(argc, argv);
-    UNUSED(force_rebuilt);
+    bool force_rebuilt = was_script_rebuilt(argc, argv);
 
     printf("Start:\n");
     defer(printf("End\n"));

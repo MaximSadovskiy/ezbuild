@@ -1,7 +1,7 @@
 // Compile: clang++ -g -O1 -fsanitize=address,fuzzer,address fuzzer.cpp -o fuzzer
 // Run:     ./fuzzer corpus/ -jobs=8 -workers=8 -max_len=1024
 
-#define ARRAY_CPP_COMPLIANT true
+#define SL_ARRAY_CPP_COMPLIANT true
 #define SL_IMPLEMENTATION
 #include "Sl.h"
 #include <cstdint>

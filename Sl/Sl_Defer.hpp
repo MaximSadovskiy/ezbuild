@@ -21,6 +21,6 @@ private:
 #ifndef DEFER_CONCAT_EXPAND
 #  define DEFER_CONCAT_EXPAND(a, b) DEFER_CONCAT(a,b)
 #endif // !DEFER_CONCAT_EXPAND
-#define defer(text) Defer__ DEFER_CONCAT_EXPAND(defer,__COUNTER__)([&](){text ;});
+#define defer(code) Defer__ DEFER_CONCAT_EXPAND(defer,__COUNTER__)([&](){code ;});
 
 #endif // DEFER_H

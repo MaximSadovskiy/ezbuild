@@ -13,17 +13,17 @@ namespace Sl
 
     struct HashMapOptions
     {
-        // Capacity of hashmap is always is power of 2
+        // Capacity of hashmap is always power of 2
         u32 initial_size = 32;
         float max_load = 0.80f;
         float grow_factor = 2.0f;
         Hasher_fn hasher = hasher_fn_default;
         usize seed = 0;
-        // Optional, if set: it will allocate memory from this allocator for Array table
+        // Optional. If set: it will allocate memory from this allocator for Array table
         Allocator* allocator = nullptr;
     };
 
-    template<typename K, typename V, bool cpp_compliant_and_slow = ARRAY_CPP_COMPLIANT>
+    template<typename K, typename V, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
     class HashMap {
         struct Entry {
             K key;
@@ -155,7 +155,6 @@ namespace Sl
         inline usize hash(const K& key, usize capacity) const noexcept
         {
             return hasher(seed, &key, sizeof(key)) & (capacity - 1);
-            // return hasher(seed, &key, sizeof(key)) % capacity;
         }
 
         void grow() noexcept

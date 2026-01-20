@@ -7,10 +7,10 @@ void* custom_realloc(void* ptr, size_t size);
 void custom_free(void* ptr);
 static int is_memory_leak_detected(void);
 
-#define ARRAY_REALLOC(ptr, size) custom_realloc((ptr), (size))
+#define SL_ARRAY_REALLOC(ptr, size) custom_realloc((ptr), (size))
 #define ARRAY_FREE(ptr) custom_free((ptr))
-#define ALLOCATOR_MALLOC(size) custom_realloc(NULL, (size))
-#define ALLOCATOR_FREE(ptr) custom_free((ptr))
+#define SL_ALLOCATOR_MALLOC(size) custom_realloc(NULL, (size))
+#define SL_ALLOCATOR_FREE(ptr) custom_free((ptr))
 
 #ifdef SL_CORE_H
 #error Must be included before <Sl.h>
