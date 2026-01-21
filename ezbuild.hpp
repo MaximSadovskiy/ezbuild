@@ -69,7 +69,7 @@ namespace Sl
     struct FileTime;
     struct FileEntry;
 
-    enum FlagsFile
+    enum class FlagsFile
     {
         FILE_OPEN_READ       = 1 << 0,
         FILE_OPEN_WRITE      = 1 << 1,
@@ -77,6 +77,9 @@ namespace Sl
         FILE_OPEN_READ_WRITE = FILE_OPEN_READ | FILE_OPEN_WRITE,
         FILE_OPEN_ALL        = FILE_OPEN_READ | FILE_OPEN_WRITE | FILE_OPEN_EXECUTE,
     };
+    s32 operator|(FlagsFile a, FlagsFile b);
+    s32 operator&(FlagsFile a, FlagsFile b);
+    FlagsFile& operator|=(FlagsFile& a, FlagsFile b);
 
     enum class FlagsWarning
     {
@@ -104,13 +107,13 @@ namespace Sl
     enum class FlagsSTD
     {
         NONE = 0,
-        C99,     // -std=c99
-        C11,     // -std=c11
-        CPP14,   // -std=c++14
-        C17,     // -std=c17
-        CPP20,   // -std=c++20
-        CPP23,   // -std=c++23
-        C2X,     // -std=c2x
+        C99,       // -std=c99
+        C11,       // -std=c11
+        CPP14,     // -std=c++14
+        C17,       // -std=c17
+        CPP20,     // -std=c++20
+        CPPLatest, // -std=c++2x..
+        C2X,       // -std=c2x
         EnumSize
     };
 
@@ -139,7 +142,7 @@ namespace Sl
         LINUX,
         BSD,
         ANDROID,
-        EnumSize  // Must be last
+        EnumSize
     };
 
     enum class FileType
@@ -165,10 +168,12 @@ namespace Sl
     bool is_flag_supported_cpp(StrView expected_flag);
     // Returns all supported flags for current compiler
     bool get_supported_flags(Array<StrView>& flags_out);
+    bool create_folder(StrView folder, bool return_error_if_folder_exist = true);
+    bool delete_folder(StrView folder);
     bool is_file_exists(StrView file);
-    bool open_file(StrView file, FileHandle& file_handle_out, FlagsFile file_flags = FILE_OPEN_READ);
-    bool create_file(StrView file, FileHandle& file_handle_out, FlagsFile file_flags = FILE_OPEN_WRITE);
-    // Deletes file from provided path. Doesn't check for existence of file
+    bool create_file(StrView file, FileHandle& handle_out, bool return_error_if_file_exist = true, FlagsFile flags = FlagsFile::FILE_OPEN_WRITE);
+    bool open_file(StrView file, FileHandle& handle_out, FlagsFile flags = FlagsFile::FILE_OPEN_READ);
+    // Doesn't check for existence of file
     bool delete_file(StrView file);
     bool write_to_file(StrView file, const char* data, usize size);
     bool write_to_file(FileHandle file_handle, const char* data, usize size);
@@ -217,7 +222,6 @@ namespace Sl
         }
         ~Cmd() {
             StrBuilder::cleanup();
-            // @TODO fix this garbo
             source_paths.cleanup();
             source_files.cleanup();
             source_files_output.cleanup();
@@ -405,25 +409,26 @@ namespace Sl
         va_end(args);
     }
 
-    inline static StrView utf16_to_utf8_windows(const char* utf16_str)
+    inline static StrView error_string(StrView utf16_str, bool force = false)
     {
-        if (utf16_str == nullptr) return {nullptr, 0};
     #if defined(_WIN32)
-        s32 utf8Len = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str, -1, NULL, 0, NULL, NULL);
+        if (!force && !utf16_str.contains_non_ascii_char()) return utf16_str;
+
+        s32 utf8Len = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str.data, -1, NULL, 0, NULL, NULL);
         if (utf8Len == 0) {
             log_error("Conversion failed for UTF-16 string\n");
             return {nullptr, 0};
         }
 
         auto* utf8_str_out = (char*)get_global_allocator()->allocate(utf8Len);
-        if (WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str, -1, utf8_str_out, utf8Len, NULL, NULL) == 0) {
+        if (WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str.data, -1, utf8_str_out, utf8Len, NULL, NULL) == 0) {
             log_error("Conversion failed for UTF-16 string\n");
             return {nullptr, 0};
         }
-        bool is_wide = true; // should it be a wide?
+        bool is_wide = false;
         return StrView((const char*)utf8_str_out, utf8Len, true, is_wide);
     #else
-        return StrView(utf16_str);
+        return utf16_str;
     #endif
     }
 
@@ -449,7 +454,7 @@ namespace Sl
     #endif
     }
 
-    static const char* normalize_path(StrBuilder& builder, StrView path, bool& is_wide)
+    static const char* normalize_path(StrBuilder& builder, StrView path, bool& is_wide, bool force_wide = false)
     {
         const char* terminated_path;
         if (path.is_null_terminated) {
@@ -461,7 +466,7 @@ namespace Sl
         }
 
         #ifdef _WIN32
-            if (!path.is_wide && path.contains_non_ascii_char()) {
+            if (force_wide || (!path.is_wide && path.contains_non_ascii_char())) {
                 is_wide = true;
                 return utf8_to_utf16_windows(terminated_path).data;
             }
@@ -471,6 +476,20 @@ namespace Sl
             is_wide = path.is_wide;
             return terminated_path;
         #endif
+    }
+
+    s32 operator|(FlagsFile a, FlagsFile b)
+    {
+        return (static_cast<s32>(a) | static_cast<s32>(b));
+    }
+    s32 operator&(FlagsFile a, FlagsFile b)
+    {
+        return static_cast<s32>(a) & static_cast<s32>(b);
+    }
+    FlagsFile& operator|=(FlagsFile& a, FlagsFile b)
+    {
+        a = static_cast<FlagsFile>(a | b);
+        return a;
     }
 
     bool is_file_exists(StrView file)
@@ -485,32 +504,30 @@ namespace Sl
     bool rename_file(StrView from, StrView to)
     {
         if (from.size == 0 || to.size == 0) return false;
-        const bool is_wide = from.is_wide || to.is_wide;
         bool result = false;
 
-        StrBuilder file_from_path(get_global_allocator());
-        file_from_path.append(from.data, from.size);
-        file_from_path.append_null();
+        StrBuilder buffer_from(get_global_allocator());
+        bool from_is_wide = from.is_wide;
+        StrBuilder buffer_to(get_global_allocator());
+        bool to_is_wide = to.is_wide;
 
-        StrBuilder file_to_path(get_global_allocator());
-        file_to_path.append(to.data, to.size);
-        file_to_path.append_null();
-
+        bool force_wide = false;
+        if (from.contains_non_ascii_char() || to.contains_non_ascii_char()) {
+            force_wide = true;
+        }
+        const char* file_from_path = normalize_path(buffer_from, from, from_is_wide, force_wide);
+        const char* file_to_path = normalize_path(buffer_to, to, to_is_wide, force_wide);
     #if defined(_WIN32)
-        if (is_wide) {
-            TODO("fix this garbage");
-            WCHAR* from_wide = (WCHAR*)file_from_path.data;
-            WCHAR* to_wide = (WCHAR*)file_to_path.data;
-            if (!from.is_wide) from_wide = (WCHAR*)utf8_to_utf16_windows(file_from_path.data).data;
-            if (!to.is_wide) to_wide = (WCHAR*)utf8_to_utf16_windows(file_from_path.data).data;
+        if (from_is_wide || to_is_wide) {
+            WCHAR* from_wide = (WCHAR*)file_from_path;
+            WCHAR* to_wide = (WCHAR*)file_to_path;
             result = MoveFileExW(from_wide, to_wide, MOVEFILE_REPLACE_EXISTING);
         } else
-            result = MoveFileExA(file_from_path.data, file_to_path.data, MOVEFILE_REPLACE_EXISTING);
+            result = MoveFileExA(file_from_path, file_to_path, MOVEFILE_REPLACE_EXISTING);
     #else
-        UNUSED(is_wide);
-        result = rename(file_from_path.data, file_to_path.data) == 0;
+        result = rename(file_from_path, file_to_path) == 0;
     #endif // !_WIN32
-        if (!result) report_error("Could not rename file \"%s\" to \"%s\"", file_from_path.data, file_to_path.data);
+        if (!result) report_error("Could not rename file \"%s\" to \"%s\"", error_string(file_from_path, from_is_wide).data, error_string(file_to_path, to_is_wide).data);
         return result;
     }
     s32 compare_file_time(FileTimeUnit file_time1, FileTimeUnit file_time2)
@@ -579,7 +596,7 @@ namespace Sl
     bool write_to_file(StrView file, const char* data, usize size)
     {
         FileHandle file_handle = INVALID_FILE_HANDLE;
-        if (!create_file(file, file_handle, FILE_OPEN_READ_WRITE)) return false;
+        if (!create_file(file, file_handle, false, FlagsFile::FILE_OPEN_READ_WRITE)) return false;
         return write_to_file(file_handle, data, size);
     }
     bool write_to_file(FileHandle file_handle, const char* data, usize size)
@@ -643,96 +660,91 @@ namespace Sl
     #endif // !_WIN32
         return true;
     }
-    bool create_file(StrView file, FileHandle& file_handle_out, FlagsFile file_flags)
+    bool create_file(StrView file, FileHandle& handle_out, bool return_error_if_file_exist, FlagsFile flags)
     {
         if (file.size == 0) return false;
 
-        StrBuilder builder(get_global_allocator());
+        StrBuilder buffer(get_global_allocator());
         bool is_wide = file.is_wide;
-        const char* file_path = normalize_path(builder, file, is_wide);
+        const char* file_path = normalize_path(buffer, file, is_wide);
 
-        #ifdef _WIN32
-            SECURITY_ATTRIBUTES sa; memory_zero(&sa, sizeof(SECURITY_ATTRIBUTES));
-            sa.nLength = sizeof(SECURITY_ATTRIBUTES);
-            sa.lpSecurityDescriptor = NULL;
-            sa.bInheritHandle = TRUE;
-            DWORD windows_access_flags = 0;
-            if (file_flags & FILE_OPEN_READ)    windows_access_flags |= GENERIC_READ;
-            if (file_flags & FILE_OPEN_WRITE)   windows_access_flags |= GENERIC_WRITE;
-            if (file_flags & FILE_OPEN_EXECUTE) windows_access_flags |= GENERIC_EXECUTE;
+    #ifdef _WIN32
+        SECURITY_ATTRIBUTES sa; memory_zero(&sa, sizeof(SECURITY_ATTRIBUTES));
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+        sa.lpSecurityDescriptor = NULL;
+        sa.bInheritHandle = TRUE;
+        DWORD windows_flags = 0;
+        if (flags & FlagsFile::FILE_OPEN_READ)    windows_flags |= GENERIC_READ;
+        if (flags & FlagsFile::FILE_OPEN_WRITE)   windows_flags |= GENERIC_WRITE;
+        if (flags & FlagsFile::FILE_OPEN_EXECUTE) windows_flags |= GENERIC_EXECUTE;
 
-            if (is_wide) {
-                file_handle_out = CreateFileW((LPCWSTR)file_path,
-                    windows_access_flags,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                    &sa,
-                    CREATE_ALWAYS,
-                    FILE_ATTRIBUTE_NORMAL,
-                    NULL);
-            } else {
-                file_handle_out = CreateFileA(file_path,
-                    windows_access_flags,
-                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                    &sa,
-                    CREATE_ALWAYS,
-                    FILE_ATTRIBUTE_NORMAL,
-                    NULL);
-            }
-        #else
-            int flags = 0;
-            const bool want_read  = (file_flags & FILE_OPEN_READ)  != 0;
-            const bool want_write = (file_flags & FILE_OPEN_WRITE) != 0;
+        if (is_wide) {
+            handle_out = CreateFileW((LPCWSTR)file_path,
+                windows_flags,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                &sa,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                NULL);
+        } else {
+            handle_out = CreateFileA(file_path,
+                windows_flags,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                &sa,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                NULL);
+        }
+    #else
+        int unix_flags = 0;
+        const bool want_read  = (flags & FlagsFile::FILE_OPEN_READ)  != 0;
+        const bool want_write = (flags & FlagsFile::FILE_OPEN_WRITE) != 0;
 
-            if (want_read && want_write) {
-                flags |= O_RDWR;
-            } else if (want_write) {
-                flags |= O_WRONLY;
-            } else if (want_read) {
-                flags |= O_RDONLY;
-            } else {
-                // No access flags requested; default to write-only for "create file".
-                flags |= O_WRONLY;
-            }
+        if (want_read && want_write) {
+            unix_flags |= O_RDWR;
+        } else if (want_write) {
+            unix_flags |= O_WRONLY;
+        } else if (want_read) {
+            unix_flags |= O_RDONLY;
+        } else {
+            // No access flags requested; default to write-only
+            unix_flags |= O_WRONLY;
+        }
+        unix_flags |= O_CREAT | O_TRUNC;
 
-            flags |= O_CREAT | O_TRUNC;
-
-            // You probably have typedef FileHandle = int; somewhere on Unix.
-            // Use a sane default mode; adjust to your needs.
-            mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // 0644
-
-            file_handle_out = open(file_path, flags, mode);
-        #endif // _WIN32
-
-        if (file_handle_out == INVALID_FILE_HANDLE) {
-            report_error("Could not create file \"" SV_FORMAT "\"", SV_ARG(file));
+        mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH; // 0644
+        handle_out = open(file_path, unix_flags, mode);
+    #endif // _WIN32
+        if (handle_out == INVALID_FILE_HANDLE) {
+            report_error("Could not create file \"%s\"", error_string(file_path, is_wide).data);
             return false;
         }
         return true;
     }
     bool delete_file(StrView file)
     {
-        StrBuilder builder(get_global_allocator());
+        StrBuilder buffer(get_global_allocator());
         bool is_wide = file.is_wide;
-        const char* file_path = normalize_path(builder, file, is_wide);
+        const char* file_path = normalize_path(buffer, file, is_wide);
 
     #if defined(_WIN32)
         // Clear read-only attribute
         if (is_wide) {
             if (!SetFileAttributesW((LPCWSTR)file_path, FILE_ATTRIBUTE_NORMAL)) {
-                report_error("Could not change permissions of file \"" SV_FORMAT "\"", SV_ARG(file));
+                report_error("Could not change permissions of file \"%s\"", error_string(file_path, is_wide).data);
                 return false;
             }
             if (!DeleteFileW((LPCWSTR)file_path)) {
-                report_error("Could not delete file \"" SV_FORMAT "\"", SV_ARG(file));
+                report_error("Could not delete file \"%s\"", error_string(file_path, is_wide).data);
                 return false;
             }
         } else {
             if (!SetFileAttributesA(file_path, FILE_ATTRIBUTE_NORMAL)) {
-                report_error("Could not change permissions of file \"" SV_FORMAT "\"", SV_ARG(file));
+                report_error("Could not change permissions of file \"%s\"", error_string(file_path, is_wide).data);
                 return false;
             }
             if (!DeleteFileA(file_path)) {
-                report_error("Could not delete file \"" SV_FORMAT "\"", SV_ARG(file));
+                report_error("Could not delete file \"%s\"", error_string(file_path, is_wide).data);
                 return false;
             }
         }
@@ -742,18 +754,18 @@ namespace Sl
         if (lstat(file_path, &st) == 0) {
             // Clear write permission for owner, group, and others
             if (chmod(file_path, st.st_mode | S_IWUSR | S_IWGRP | S_IWOTH) != 0) {
-                report_error("Could not change permissions of file \"" SV_FORMAT "\"", SV_ARG(file));
+                report_error("Could not change permissions of file \"%s\"", error_string(file_path).data);
                 return false;
             }
         }
         if (unlink(file_path) != 0) {
-            report_error("Could not delete file \"" SV_FORMAT "\"", SV_ARG(file));
+            report_error("Could not delete file \"%s\"", error_string(file_path).data);
             return false;
         }
     #endif // _WIN32
         return true;
     }
-    bool open_file(StrView file, FileHandle& file_handle_out, FlagsFile file_flags)
+    bool open_file(StrView file, FileHandle& handle_out, FlagsFile flags)
     {
         if (file.size == 0) return false;
         StrBuilder null_terminated_file(get_global_allocator());
@@ -767,22 +779,22 @@ namespace Sl
         sa.nLength = sizeof(SECURITY_ATTRIBUTES);
         sa.lpSecurityDescriptor = NULL;
         sa.bInheritHandle = TRUE;
-        DWORD windows_access_flags = 0;
-        if (file_flags & FILE_OPEN_READ)    windows_access_flags |= GENERIC_READ;
-        if (file_flags & FILE_OPEN_WRITE)   windows_access_flags |= GENERIC_WRITE;
-        if (file_flags & FILE_OPEN_EXECUTE) windows_access_flags |= GENERIC_EXECUTE;
+        DWORD windows_flags = 0;
+        if (flags & FlagsFile::FILE_OPEN_READ)    windows_flags |= GENERIC_READ;
+        if (flags & FlagsFile::FILE_OPEN_WRITE)   windows_flags |= GENERIC_WRITE;
+        if (flags & FlagsFile::FILE_OPEN_EXECUTE) windows_flags |= GENERIC_EXECUTE;
 
         if (is_wide) {
-            file_handle_out = CreateFileW((LPCWSTR)file_path,
-                windows_access_flags,
+            handle_out = CreateFileW((LPCWSTR)file_path,
+                windows_flags,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 &sa,
                 OPEN_EXISTING,
                 NULL,
                 NULL);
         } else {
-            file_handle_out = CreateFileA(file_path,
-                windows_access_flags,
+            handle_out = CreateFileA(file_path,
+                windows_flags,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 &sa,
                 OPEN_EXISTING,
@@ -790,17 +802,17 @@ namespace Sl
                 NULL);
         }
     #else
-        int linux_access_flags = O_RDONLY;
-        if (file_flags & FILE_OPEN_READ && file_flags & FILE_OPEN_WRITE) {
-            linux_access_flags = O_RDWR;
-        } else if (file_flags & FILE_OPEN_WRITE) {
-            linux_access_flags = O_WRONLY;
+        int unix_flags = O_RDONLY;
+        if (flags & FlagsFile::FILE_OPEN_WRITE) {
+            if (flags & FlagsFile::FILE_OPEN_READ)
+                unix_flags = O_RDWR;
+            else
+                unix_flags = O_WRONLY;
         }
-        file_handle_out = open(file_path, linux_access_flags);
+        handle_out = open(file_path, unix_flags);
     #endif // !_WIN32
-
-        if (file_handle_out == INVALID_FILE_HANDLE) {
-            report_error("Could not open file \"%s\"", file_path);
+        if (handle_out == INVALID_FILE_HANDLE) {
+            report_error("Could not open file \"%s\"", error_string(file_path, is_wide).data);
             return false;
         }
         return true;
@@ -823,12 +835,78 @@ namespace Sl
                 report_error("Could not close file descriptor %d", file_handle);
                 return false;
             }
-        #endif
+        #endif // _WIN32
         return true;
+    }
+    bool create_folder(StrView folder, bool return_error_if_folder_exist)
+    {
+        if (folder.size == 0) return false;
+
+        bool result = false;
+        StrBuilder builder(get_global_allocator());
+        bool is_wide = folder.is_wide;
+        const char* folder_path = normalize_path(builder, folder, is_wide);
+    #ifdef _WIN32
+        if (!return_error_if_folder_exist) {
+            DWORD attributes;
+            if (is_wide)
+                GetFileAttributesW((LPCWSTR)folder_path);
+            else
+                GetFileAttributesA(folder_path);
+            if (attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_DIRECTORY)
+                return false;
+        }
+        SECURITY_ATTRIBUTES sa; memory_zero(&sa, sizeof(SECURITY_ATTRIBUTES));
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+        sa.lpSecurityDescriptor = NULL;
+        sa.bInheritHandle = TRUE;
+
+        BOOL result_windows;
+        if (is_wide)
+            result_windows = CreateDirectoryW((LPCWSTR)folder_path, &sa);
+        else
+            result_windows = CreateDirectoryA(folder_path, &sa);
+        result = (bool)result_windows;
+    #else
+        if (!return_error_if_folder_exist) {
+            struct stat st;
+            if (stat(folder_path, &st) == 0 && S_ISDIR(st.st_mode))
+                return false;
+        }
+        mode_t mode = 0755;
+        result = mkdir(folder_path, mode) == 0;
+    #endif // _WIN32
+
+        if (!result) report_error("Could not create folder \"%s\"", error_string(folder_path, is_wide).data);
+        return result;
+    }
+    bool delete_folder(StrView folder)
+    {
+        if (folder.size == 0) return false;
+
+        bool result = false;
+        StrBuilder builder(get_global_allocator());
+        bool is_wide = folder.is_wide;
+        const char* folder_path = normalize_path(builder, folder, is_wide);
+
+    #ifdef _WIN32
+        BOOL result_windows;
+        if (is_wide) {
+            result_windows = RemoveDirectoryW((LPCWSTR)folder_path);
+        } else {
+            result_windows = RemoveDirectoryA(folder_path);
+        }
+        result = (bool)result_windows;
+    #else
+        result = rmdir(folder_path) == 0;
+    #endif // _WIN32
+
+        if (!result) report_error("Could not delete folder \"%s\"", error_string(folder_path, is_wide).data);
+        return result;
     }
     bool read_folder(StrView folder_path, Array<FileEntry>& files_out)
     {
-        StrBuilder folder_path_terminated = {};
+        StrBuilder folder_path_terminated(get_global_allocator());
         bool is_wide = folder_path.is_wide;
         const char* file_path = normalize_path(folder_path_terminated, folder_path, is_wide);
 
@@ -871,9 +949,9 @@ namespace Sl
                 else file_size = memory_strlen(cFileName);
 
                 bool ignore = false;
-                if (memory_equals(cFileName, file_size, ".", STR_LIT_SIZE("."))) ignore = true;
-                if (memory_equals(cFileName, file_size, "..", STR_LIT_SIZE(".."))) ignore = true;
-                if (memory_equals(cFileName, file_size, L".", STR_LIT_SIZE(L"."))) ignore = true;
+                if (memory_equals(cFileName, file_size, ".",   STR_LIT_SIZE(".")))   ignore = true;
+                if (memory_equals(cFileName, file_size, "..",  STR_LIT_SIZE("..")))  ignore = true;
+                if (memory_equals(cFileName, file_size, L".",  STR_LIT_SIZE(L".")))  ignore = true;
                 if (memory_equals(cFileName, file_size, L"..", STR_LIT_SIZE(L".."))) ignore = true;
 
                 FileType type = FileType::NORMAL;
@@ -882,19 +960,12 @@ namespace Sl
                 else if (*attributes & FILE_ATTRIBUTE_DEVICE) type = FileType::OTHER;
                 if (!ignore) {
                     if (is_wide) {
-                        auto utf8_file = utf16_to_utf8_windows(cFileName);
-                        utf8_file.is_null_terminated = true;
-                        utf8_file.is_wide = is_wide;
-                        files_out.push(
-                            utf8_file,
-                            type);
+                        auto utf8_file = error_string(cFileName);
+                        files_out.push(utf8_file, type);
                     } else {
-                        files_out.push(
-                            StrView{(const char*)memory_duplicate(*get_global_allocator(), cFileName, file_size), file_size, true, is_wide},
-                            type);
+                        files_out.push(StrView{(const char*)memory_duplicate(*get_global_allocator(), cFileName, file_size), file_size, true, is_wide}, type);
                     }
                 }
-
                 if (is_wide)
                     result = FindNextFileW(hFind, &dataw);
                 else
@@ -905,15 +976,14 @@ namespace Sl
         if (hFind != INVALID_HANDLE_VALUE)
             FindClose(hFind);
         else {
-            report_error("Could not read folder \"%s\"", folder_path_terminated.data);
-            folder_path_terminated.cleanup();
+            report_error("Could not read folder \"%s\"", error_string(folder_path_terminated.to_string_view(true), is_wide).data);
             return false;
         }
+        return true;
     #else
-        UNUSED(file_path);
-        DIR* dir = opendir(folder_path.data);
+        DIR* dir = opendir(file_path);
         if (!dir) {
-            report_error("Could not read folder \"" SV_FORMAT "\"", SV_ARG(folder_path));
+            report_error("Could not read folder \"%s\"", error_string(file_path));
             return false;
         }
 
@@ -923,14 +993,14 @@ namespace Sl
             struct dirent* entry = readdir(dir);
             if (!entry) {
                 if (errno != 0) {
-                    report_error("Error reading folder \"" SV_FORMAT "\"", SV_ARG(folder_path));
+                    report_error("Error reading folder \"%s\"", error_string(file_path));
                     success = false;
                 }
                 break;
             }
 
             const usize name_len = strlen(entry->d_name);
-            if (memory_equals(entry->d_name, name_len, ".", 1)) continue;
+            if (memory_equals(entry->d_name, name_len, ".", 1))  continue;
             if (memory_equals(entry->d_name, name_len, "..", 2)) continue;
 
             // Construct full path for stat
@@ -970,15 +1040,13 @@ namespace Sl
         closedir(dir);
         return success;
     #endif // !_WIN32
-        folder_path_terminated.cleanup();
-        return true;
     }
     bool get_supported_flags(Array<StrView>& flags)
     {
         Cmd cmd = {}; cmd._allocator = get_global_allocator();
         FileHandle output;
         const char* flags_file = "flag.temp";
-        if (!create_file(flags_file, output, FILE_OPEN_READ_WRITE)) return false;
+        if (!create_file(flags_file, output, false, FlagsFile::FILE_OPEN_READ_WRITE)) return false;
         const auto compiler = get_compiler();
         if (compiler == FlagsCompiler::CLANG)
             cmd.push("clang++", "--help");
@@ -1312,7 +1380,6 @@ namespace Sl
             Allocator* alloc = get_global_allocator();
             Array<const char*> arr = {alloc};
             do {
-                // @TODO linux is retarded
                 auto index = data_view.find_first_occurrence_char(' ');
                 if (index == StrView::INVALID_INDEX) {
                     arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(data_view)));
@@ -1487,11 +1554,11 @@ namespace Sl
                 case FlagsSTD::CPP20:
                     push("c++20");
                     break;
-                case FlagsSTD::CPP23:
+                case FlagsSTD::CPPLatest:
                     if (compiler == FlagsCompiler::MSVC)
                         push("c++latest");
                     else
-                        push("c++23");
+                        push("c++20");
                     break;
                 case FlagsSTD::C2X:
                     push("c++2c");
@@ -1513,7 +1580,7 @@ namespace Sl
                 case FlagsSTD::C17:
                     push("c17");
                     break;
-                case FlagsSTD::CPP23:
+                case FlagsSTD::CPPLatest:
                 case FlagsSTD::CPP20:
                 case FlagsSTD::C2X:
                     push("c2x");
@@ -1675,7 +1742,9 @@ namespace Sl
 
         if (append_flag)
             push_flag_output(compiler);
-        // @TODO fix bug, if output_name doesnt start with "./" then it wont run in lipux
+        if (!output_name.starts_with("./") && !output_name.contains('/')) {
+            append("./");
+        }
         append(output_name.data, output_name.size);
     #if defined(_WIN32)
         if (!output_contains_ext) {

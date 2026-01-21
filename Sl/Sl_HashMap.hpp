@@ -45,7 +45,7 @@ namespace Sl
             const auto new_capacity = is_power_of_two(opt.initial_size) ? opt.initial_size : next_power_of_two(opt.initial_size);
             table.count = new_capacity;
             table.reserve(new_capacity);
-            table.memzero();
+            for (auto& slot : table) slot.occupied = false;
 
             count = 0;
             hasher = opt.hasher;
@@ -62,34 +62,10 @@ namespace Sl
         template<typename... Args>
         void insert(K&& key, Args&&... args) noexcept
         {
-            if (++count > table.capacity * max_load) {
-                grow();
-            }
-
-            const usize index = hash(key, table.capacity);
-            for (usize i = index; i < table.capacity; ++i) {
-                auto& slot = table[i];
-                if (!slot.occupied) {
-                    ::new (&slot.value) V(std::forward<Args>(args)...);
-                    slot.key = std::move(key);
-                    slot.occupied = true;
-                    return;
-                }
-            }
-            const auto new_pos = table.count;
-            grow();
-            auto& slot = table[new_pos];
-            :: new (&slot.value) V(std::forward<Args>(args)...);
-            slot.key = std::move(key);
-            slot.occupied = true;
-        }
-
-        template<typename... Args>
-        void insert(K& key, Args&&... args) noexcept
-        {
             if (++count > table.capacity * max_load) grow();
 
             const usize index = hash(key, table.capacity);
+            usize probed = index;
             for (usize i = index; i < table.capacity; ++i) {
                 auto& slot = table[i];
                 if (!slot.occupied) {
@@ -99,13 +75,48 @@ namespace Sl
                     return;
                 }
             }
-            const auto new_pos = table.count;
+            // Wrap if not found
+            for (usize i = 0; i < index; ++i) {
+                auto& slot = table[i];
+                if (!slot.occupied) {
+                    ::new (&slot.value) V(std::forward<Args>(args)...);
+                    slot.key = key;
+                    slot.occupied = true;
+                    return;
+                }
+            }
             grow();
+            insert(std::move(key), std::forward<Args>(args)...);
+        }
 
-            auto& slot = table[new_pos];
-            :: new (&slot.value) V(std::forward<Args>(args)...);
-            slot.key = key;
-            slot.occupied = true;
+        template<typename... Args>
+        void insert(K& key, Args&&... args) noexcept
+        {
+            if (++count > table.capacity * max_load) grow();
+
+            const usize index = hash(key, table.capacity);
+            usize probed = index;
+            for (usize i = index; i < table.capacity; ++i) {
+                auto& slot = table[i];
+                if (!slot.occupied) {
+                    ::new (&slot.value) V(std::forward<Args>(args)...);
+                    slot.key = key;
+                    slot.occupied = true;
+                    return;
+                }
+            }
+            // Wrap if not found
+            for (usize i = 0; i < index; ++i) {
+                auto& slot = table[i];
+                if (!slot.occupied) {
+                    ::new (&slot.value) V(std::forward<Args>(args)...);
+                    slot.key = key;
+                    slot.occupied = true;
+                    return;
+                }
+            }
+            grow();
+            insert(std::move(key), std::forward<Args>(args)...);
         }
 
         V* operator[](const K& key) noexcept
@@ -130,7 +141,7 @@ namespace Sl
         {
             const usize index = hash(key, table.capacity);
 
-            for (size_t i = index; i < table.count; ++i) {
+            for (size_t i = index; i < table.capacity; ++i) {
                 Entry& slot = table[i];
 
                 if (!slot.occupied) return false;
@@ -144,8 +155,8 @@ namespace Sl
         }
 
         template<typename Function>
-        void forEach(Function&& func) noexcept {
-            for (size_t i = 0; i < table.count; ++i) {
+        void forEach(Function&& func) const noexcept {
+            for (size_t i = 0; i < table.capacity; ++i) {
                 Entry& slot = table[i];
 
                 if (slot.occupied) func(slot.key, slot.value);
@@ -164,15 +175,21 @@ namespace Sl
                 new_capacity = next_power_of_two(new_capacity);
             }
             Array<Entry, cpp_compliant_and_slow> new_table;
+        restart:
             new_table.count = new_capacity;
             new_table.reserve(new_capacity);
-            new_table.memzero();
+            for (auto& slot : new_table) slot.occupied = false;
 
             this->count = 0;
             for (usize i = 0; i < this->table.capacity; ++i) {
                 auto& slot = this->table[i];
                 if (slot.occupied) {
-                    insert_inner(new_table, std::move(slot.key), std::move(slot.value));
+                    if (!insert_inner(new_table, std::move(slot.key), std::move(slot.value)))
+                    {
+                        new_table.count = 0;
+                        new_capacity = next_power_of_two(new_capacity * grow_factor);
+                        goto restart;
+                    }
                     ++this->count;
                 }
             }
@@ -201,15 +218,6 @@ namespace Sl
             table.count = 0;
             table.cleanup();
         }
-
-        template<typename Function>
-        void forEach(Function&& func) const noexcept {
-            for (size_t i = 0; i < table.count; ++i) {
-                Entry& slot = table[i];
-
-                if (slot.occupied) func(slot.key, slot.value);
-            }
-        }
     private:
         static constexpr bool is_power_of_two(usize n) noexcept
         {
@@ -228,10 +236,9 @@ namespace Sl
             n |= n >> 32;
             return n + 1;
         }
-        void insert_inner(Array<Entry, cpp_compliant_and_slow>& _table, K&& key, V&& value) noexcept
+        bool insert_inner(Array<Entry, cpp_compliant_and_slow>& _table, K&& key, V&& value) noexcept
         {
             ++count;
-            // @TODO fix this function
             ASSERT_TRUE(count < _table.capacity);
 
             const usize index = hash(key, _table.capacity);
@@ -242,15 +249,20 @@ namespace Sl
                     slot.key = std::move(key);
                     slot.value = std::move(value);
                     slot.occupied = true;
-                    return;
+                    return true;
                 }
             }
-            UNREACHABLE("GG");
-            // const auto new_pos = _table.count;
-            // grow();
-            // _table[new_pos].key = std::move(key);
-            // _table[new_pos].value = std::move(value);
-            // _table[new_pos].occupied = true;
+            for (usize i = 0; i < index; ++i) {
+                Entry& slot = _table[i];
+
+                if (!slot.occupied) {
+                    slot.key = std::move(key);
+                    slot.value = std::move(value);
+                    slot.occupied = true;
+                    return true;
+                }
+            }
+            return false;
         }
     };
 

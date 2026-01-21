@@ -14,7 +14,7 @@ bool sleep_example(Cmd& cmd, u32 number_of_procs)
         if (system == FlagsSystem::WINDOWS)
             cmd.appendf("sleep.bat %d", i);
         else
-            cmd.appendf("./sleep.sh %d", i);
+            cmd.appendf("bash sleep.sh %d", i);
         cmd.execute({.async = &procs});
     }
     return procs.wait_all();
@@ -23,7 +23,7 @@ bool sleep_example(Cmd& cmd, u32 number_of_procs)
 bool file_example(const char* file_path)
 {
     FileHandle file;
-    if (!create_file(file_path, file, FILE_OPEN_WRITE)) return false;
+    if (!create_file(file_path, file, false, FlagsFile::FILE_OPEN_WRITE)) return false;
 
     StrBuilder buffer;
     buffer.append("file_example:\n");
@@ -84,7 +84,7 @@ bool build_cpp(Cmd& cmd, bool force_rebuilt)
                            .incremental_build = true,
                            .optimize = FlagsOptimization::BASIC,
                            .warnings = FlagsWarning::ALL,
-                           .std = FlagsSTD::CPP23
+                           .std = FlagsSTD::CPPLatest
                          });
 
     cmd.add_include_path("inner/");

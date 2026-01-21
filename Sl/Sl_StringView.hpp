@@ -33,7 +33,8 @@ namespace Sl
         bool equals(StrView sv) const noexcept;
         bool starts_with(StrView prefix) const noexcept;
         bool ends_with(StrView suffix) const noexcept;
-        bool split_by_char(LocalArray<StrView>& arr, char ch) const noexcept;
+        bool contains(char ch) const noexcept;
+        bool split_by_char(LocalArray<StrView>& array_out, char character) const noexcept;
         usize find_first_occurrence_char(char ch) const noexcept;
         usize find_first_occurrence_char_until(char ch, char until) const noexcept;
         usize find_last_occurrence_char(char ch) const noexcept;
@@ -122,21 +123,20 @@ namespace Sl
         return index;
     }
 
-    bool StrView::split_by_char(LocalArray<StrView>& arr, char ch) const noexcept
+    bool StrView::split_by_char(LocalArray<StrView>& array_out, char character) const noexcept
     {
-        // @TODO Garbage implementation, need to implement using iterators
-        arr.clear();
+        array_out.clear();
         usize start = 0;
         for (usize i = 0; i <= size; ++i) {
             // End of string or found delimiter
-            if (i == size || data[i] == ch) {
+            if (i == size || data[i] == character) {
                 if (i > start) {
-                    arr.push(data + start, i - start);
+                    array_out.push(data + start, i - start);
                 }
                 start = i + 1;
             }
         }
-        return arr.count() > 0;
+        return array_out.count() > 0;
     }
 
 
@@ -228,6 +228,11 @@ namespace Sl
 
         const usize offset_size = (size - suffix.size);
         return memory_equals(data + offset_size, size - offset_size, suffix.data, suffix.size);
+    }
+
+    bool StrView::contains(char ch) const noexcept
+    {
+        return find_first_occurrence_char(ch) != INVALID_INDEX;
     }
 
     usize StrView::trim_left_char(char ch) noexcept
