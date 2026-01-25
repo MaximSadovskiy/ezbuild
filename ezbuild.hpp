@@ -163,15 +163,15 @@ namespace Sl
     // Compares time of depency files with provided file. If true, that means file needs to be rebuilt
     bool file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
     // Must have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
-    bool file_needs_rebuilt_cpp(StrView obj, StrView src_file);
+    bool file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "");
     // Checks if provided argument is supported for current compiler
     bool is_flag_supported_cpp(StrView expected_flag);
     // Returns all supported flags for current compiler
     bool get_supported_flags(Array<StrView>& flags_out);
-    bool create_folder(StrView folder, bool return_error_if_folder_exist = true);
+    bool create_folder(StrView folder, bool return_error_if_folder_exist = false);
     bool delete_folder(StrView folder);
     bool is_file_exists(StrView file);
-    bool create_file(StrView file, FileHandle& handle_out, bool return_error_if_file_exist = true, FlagsFile flags = FlagsFile::FILE_OPEN_WRITE);
+    bool create_file(StrView file, FileHandle& handle_out, bool return_error_if_file_exist = false, FlagsFile flags = FlagsFile::FILE_OPEN_WRITE);
     bool open_file(StrView file, FileHandle& handle_out, FlagsFile flags = FlagsFile::FILE_OPEN_READ);
     // Doesn't check for existence of file
     bool delete_file(StrView file);
@@ -185,6 +185,7 @@ namespace Sl
     bool read_folder(StrView folder_path, Array<FileEntry>& files_out);
     bool read_entire_file(StrView file_path, StrBuilder& buffer);
     bool read_entire_file(FileHandle file_handle, StrBuilder& buffer);
+    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder = "");
     SystemInfo get_system_info();
     usize get_last_error_code();
     const char* get_error_message();
@@ -264,6 +265,8 @@ namespace Sl
     // Funtions down below can be called in between start_cpp() and build() in order to configure build steps
         // Set output file name to provided one
         void output_file(StrView file, bool contains_ext = false);
+        // Sets the folder, where all temporary files will be generated (optional)
+        void output_folder(StrView folder);
         // Add source file to build step
         void add_source_file(StrView file);
         // Add source files from folder (This will add all .c and .cpp files from provided folder)
@@ -300,6 +303,7 @@ namespace Sl
         void append_custom_flags();
         void append_linker_flags(FlagsCompiler compiler);
         void append_output_name(FlagsCompiler compiler, bool append_flag = true);
+        void build_tree_of_folders(StrView file);
     public:
         Array<StrView> source_paths = {};
         Array<StrView> source_files = {};
@@ -311,6 +315,7 @@ namespace Sl
         Array<StrView> custom_arguments = {};
         Array<StrView> defines = {};
         StrView        output_name = {"a", 1, true, false};
+        StrView        _output_folder = {".ezbuild", 8, true, false};
         bool           output_contains_ext = false;
         bool           incremental_build = true;
         u32            max_concurent_procceses = 0;
@@ -409,26 +414,26 @@ namespace Sl
         va_end(args);
     }
 
-    inline static StrView error_string(StrView utf16_str, bool force = false)
+    inline static const char* error_string(StrView utf16_str, bool force = false)
     {
     #if defined(_WIN32)
-        if (!force && !utf16_str.contains_non_ascii_char()) return utf16_str;
+        if (!force && !utf16_str.contains_non_ascii_char()) return utf16_str.data;
 
         s32 utf8Len = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str.data, -1, NULL, 0, NULL, NULL);
         if (utf8Len == 0) {
             log_error("Conversion failed for UTF-16 string\n");
-            return {nullptr, 0};
+            return nullptr;
         }
 
         auto* utf8_str_out = (char*)get_global_allocator()->allocate(utf8Len);
         if (WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR)utf16_str.data, -1, utf8_str_out, utf8Len, NULL, NULL) == 0) {
             log_error("Conversion failed for UTF-16 string\n");
-            return {nullptr, 0};
+            return nullptr;
         }
-        bool is_wide = false;
-        return StrView((const char*)utf8_str_out, utf8Len, true, is_wide);
+        return (const char*)utf8_str_out;
     #else
-        return utf16_str;
+        UNUSED(force);
+        return utf16_str.data;
     #endif
     }
 
@@ -473,6 +478,7 @@ namespace Sl
             else
                 return terminated_path;
         #else
+            UNUSED(force_wide);
             is_wide = path.is_wide;
             return terminated_path;
         #endif
@@ -527,7 +533,7 @@ namespace Sl
     #else
         result = rename(file_from_path, file_to_path) == 0;
     #endif // !_WIN32
-        if (!result) report_error("Could not rename file \"%s\" to \"%s\"", error_string(file_from_path, from_is_wide).data, error_string(file_to_path, to_is_wide).data);
+        if (!result) report_error("Could not rename file \"%s\" to \"%s\"", error_string(file_from_path, from_is_wide), error_string(file_to_path, to_is_wide));
         return result;
     }
     s32 compare_file_time(FileTimeUnit file_time1, FileTimeUnit file_time2)
@@ -667,8 +673,18 @@ namespace Sl
         StrBuilder buffer(get_global_allocator());
         bool is_wide = file.is_wide;
         const char* file_path = normalize_path(buffer, file, is_wide);
-
     #ifdef _WIN32
+        if (return_error_if_file_exist) {
+            DWORD attributes;
+            if (is_wide)
+                attributes = GetFileAttributesW((LPCWSTR)file_path);
+            else
+                attributes = GetFileAttributesA(file_path);
+            if (attributes != INVALID_FILE_ATTRIBUTES) {
+                log_error("Failed to create file: \"%s\" already exists\n", error_string(file_path, is_wide));
+                return false;
+            }
+        }
         SECURITY_ATTRIBUTES sa; memory_zero(&sa, sizeof(SECURITY_ATTRIBUTES));
         sa.nLength = sizeof(SECURITY_ATTRIBUTES);
         sa.lpSecurityDescriptor = NULL;
@@ -696,6 +712,13 @@ namespace Sl
                 NULL);
         }
     #else
+        if (return_error_if_file_exist) {
+            struct stat st;
+            if (stat(file_path, &st) == 0) {
+                log_error("Failed to create file: \"%s\" already exists\n", error_string(file_path, is_wide));
+                return false;
+            }
+        }
         int unix_flags = 0;
         const bool want_read  = (flags & FlagsFile::FILE_OPEN_READ)  != 0;
         const bool want_write = (flags & FlagsFile::FILE_OPEN_WRITE) != 0;
@@ -716,7 +739,7 @@ namespace Sl
         handle_out = open(file_path, unix_flags, mode);
     #endif // _WIN32
         if (handle_out == INVALID_FILE_HANDLE) {
-            report_error("Could not create file \"%s\"", error_string(file_path, is_wide).data);
+            report_error("Could not create file \"%s\"", error_string(file_path, is_wide));
             return false;
         }
         return true;
@@ -731,20 +754,20 @@ namespace Sl
         // Clear read-only attribute
         if (is_wide) {
             if (!SetFileAttributesW((LPCWSTR)file_path, FILE_ATTRIBUTE_NORMAL)) {
-                report_error("Could not change permissions of file \"%s\"", error_string(file_path, is_wide).data);
+                report_error("Could not change permissions of file \"%s\"", error_string(file_path, is_wide));
                 return false;
             }
             if (!DeleteFileW((LPCWSTR)file_path)) {
-                report_error("Could not delete file \"%s\"", error_string(file_path, is_wide).data);
+                report_error("Could not delete file \"%s\"", error_string(file_path, is_wide));
                 return false;
             }
         } else {
             if (!SetFileAttributesA(file_path, FILE_ATTRIBUTE_NORMAL)) {
-                report_error("Could not change permissions of file \"%s\"", error_string(file_path, is_wide).data);
+                report_error("Could not change permissions of file \"%s\"", error_string(file_path, is_wide));
                 return false;
             }
             if (!DeleteFileA(file_path)) {
-                report_error("Could not delete file \"%s\"", error_string(file_path, is_wide).data);
+                report_error("Could not delete file \"%s\"", error_string(file_path, is_wide));
                 return false;
             }
         }
@@ -754,12 +777,12 @@ namespace Sl
         if (lstat(file_path, &st) == 0) {
             // Clear write permission for owner, group, and others
             if (chmod(file_path, st.st_mode | S_IWUSR | S_IWGRP | S_IWOTH) != 0) {
-                report_error("Could not change permissions of file \"%s\"", error_string(file_path).data);
+                report_error("Could not change permissions of file \"%s\"", error_string(file_path));
                 return false;
             }
         }
         if (unlink(file_path) != 0) {
-            report_error("Could not delete file \"%s\"", error_string(file_path).data);
+            report_error("Could not delete file \"%s\"", error_string(file_path));
             return false;
         }
     #endif // _WIN32
@@ -812,7 +835,7 @@ namespace Sl
         handle_out = open(file_path, unix_flags);
     #endif // !_WIN32
         if (handle_out == INVALID_FILE_HANDLE) {
-            report_error("Could not open file \"%s\"", error_string(file_path, is_wide).data);
+            report_error("Could not open file \"%s\"", error_string(file_path, is_wide));
             return false;
         }
         return true;
@@ -850,9 +873,9 @@ namespace Sl
         if (!return_error_if_folder_exist) {
             DWORD attributes;
             if (is_wide)
-                GetFileAttributesW((LPCWSTR)folder_path);
+                attributes = GetFileAttributesW((LPCWSTR)folder_path);
             else
-                GetFileAttributesA(folder_path);
+                attributes = GetFileAttributesA(folder_path);
             if (attributes != INVALID_FILE_ATTRIBUTES && attributes & FILE_ATTRIBUTE_DIRECTORY)
                 return false;
         }
@@ -877,7 +900,7 @@ namespace Sl
         result = mkdir(folder_path, mode) == 0;
     #endif // _WIN32
 
-        if (!result) report_error("Could not create folder \"%s\"", error_string(folder_path, is_wide).data);
+        if (!result) report_error("Could not create folder \"%s\"", error_string(folder_path, is_wide));
         return result;
     }
     bool delete_folder(StrView folder)
@@ -901,7 +924,7 @@ namespace Sl
         result = rmdir(folder_path) == 0;
     #endif // _WIN32
 
-        if (!result) report_error("Could not delete folder \"%s\"", error_string(folder_path, is_wide).data);
+        if (!result) report_error("Could not delete folder \"%s\"", error_string(folder_path, is_wide));
         return result;
     }
     bool read_folder(StrView folder_path, Array<FileEntry>& files_out)
@@ -960,8 +983,7 @@ namespace Sl
                 else if (*attributes & FILE_ATTRIBUTE_DEVICE) type = FileType::OTHER;
                 if (!ignore) {
                     if (is_wide) {
-                        auto utf8_file = error_string(cFileName);
-                        files_out.push(utf8_file, type);
+                        files_out.push(error_string(cFileName), type);
                     } else {
                         files_out.push(StrView{(const char*)memory_duplicate(*get_global_allocator(), cFileName, file_size), file_size, true, is_wide}, type);
                     }
@@ -976,7 +998,7 @@ namespace Sl
         if (hFind != INVALID_HANDLE_VALUE)
             FindClose(hFind);
         else {
-            report_error("Could not read folder \"%s\"", error_string(folder_path_terminated.to_string_view(true), is_wide).data);
+            report_error("Could not read folder \"%s\"", error_string(folder_path_terminated.to_string_view(true), is_wide));
             return false;
         }
         return true;
@@ -1244,7 +1266,7 @@ namespace Sl
         }
 
         if (exit_status != 0) {
-            report_error("Process 0x%zx exited with exit code %lu", (usize)id, exit_status);
+            log_error("Process 0x%zx exited with exit code %lu\n", (usize)id, exit_status);
             DEFER_RETURN(false);
         }
     end:
@@ -1264,12 +1286,12 @@ namespace Sl
         if (WIFEXITED(status)) {
             exit_code = WEXITSTATUS(status);
             if (exit_code != 0) {
-                report_error("Process %d exited with code %d", id, exit_code);
+                log_error("Process %d exited with code %d\n", id, exit_code);
                 DEFER_RETURN(false);
             }
         }
         if (WIFSIGNALED(status)) {
-            report_error("Command process was terminated by signal %d", WTERMSIG(status));
+            log_error("Command process was terminated by signal %d\n", WTERMSIG(status));
             DEFER_RETURN(false);
         }
     end:
@@ -1380,14 +1402,29 @@ namespace Sl
             Allocator* alloc = get_global_allocator();
             Array<const char*> arr = {alloc};
             do {
-                auto index = data_view.find_first_occurrence_char(' ');
+                // @TODO i know this is shit, but it works
+                auto index = data_view.find_first_occurrence_char_until(' ', '"');
                 if (index == StrView::INVALID_INDEX) {
-                    arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(data_view)));
-                    break;
+                    auto quote_index = data_view.find_first_occurrence_char('"');
+                    if (quote_index != StrView::INVALID_INDEX) {
+                        usize cursor = quote_index + 1;
+                        data_view.chop_left(cursor);
+                        index = data_view.find_first_occurrence_char('"');
+                        auto arg = data_view.chop_left(index);
+                        data_view.chop_left(1); // skip "
+                        arg.trim();
+                        if (arg.size > 0)
+                            arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(arg)));
+                        continue;
+                    } else {
+                        arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(data_view)));
+                        break;
+                    }
                 }
                 auto arg = data_view.chop_left(index);
                 data_view.chop_left(1);
-                arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(arg)));
+                if (arg.size > 0)
+                    arr.push((const char*)memory_format(*alloc, size_out, SV_FORMAT, SV_ARG(arg)));
             } while(data_view.size > 0);
             arr.push((const char*)nullptr);
 
@@ -1730,6 +1767,11 @@ namespace Sl
         }
     }
 
+    void Cmd::output_folder(StrView folder)
+    {
+        _output_folder = folder;
+    }
+
     void Cmd::output_file(StrView file, bool contains_ext)
     {
         output_name = file;
@@ -1742,7 +1784,7 @@ namespace Sl
 
         if (append_flag)
             push_flag_output(compiler);
-        if (!output_name.starts_with("./") && !output_name.contains('/')) {
+        if (output_name.find_first_of_chars("/\\") == StrView::INVALID_INDEX) {
             append("./");
         }
         append(output_name.data, output_name.size);
@@ -1754,7 +1796,7 @@ namespace Sl
         append(' ');
     }
 
-    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out)
+    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder)
     {
         auto cpp_index = depency_path.find_last_occurrence_word(".cpp");
         if (cpp_index == StrView::INVALID_INDEX) {
@@ -1765,6 +1807,10 @@ namespace Sl
 
         FileHandle depency;
         StrBuilder new_depency_path(get_global_allocator());
+        if (output_folder.size > 0) {
+            new_depency_path.append(output_folder);
+            new_depency_path.append('/');
+        }
         new_depency_path.append(depency_path);
         auto compiler = get_compiler();
         if (compiler != FlagsCompiler::MSVC) {
@@ -1883,11 +1929,12 @@ namespace Sl
         return true;
     }
 
-    bool file_needs_rebuilt_cpp(StrView obj, StrView src_file)
+    bool file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder)
     {
         ASSERT(obj.data != nullptr && obj.size > 0, "Provide correct object file path");
         ASSERT(src_file.data != nullptr && src_file.size > 0, "Provide correct source file path");
 
+        ScopedLogger _(logger_muted);
         FileHandle obj_handle = INVALID_FILE_HANDLE;
         if (!open_file(obj, obj_handle)) return true;
 
@@ -1906,7 +1953,7 @@ namespace Sl
             return true;
 
         Array<StrView> deps(get_global_allocator());
-        if (!read_dependencies(src_file, deps)) return true;
+        if (!read_dependencies(src_file, deps, output_folder)) return true;
 
         StrBuilder escaped_dependency(get_global_allocator());
         for (auto& dependency : deps) {
@@ -1944,15 +1991,32 @@ namespace Sl
         return file;
     }
 
+    void Cmd::build_tree_of_folders(StrView file)
+    {
+        LocalArray<StrView> folders(get_global_allocator());
+        file.split_by_char(folders, '/');
+        StrBuilder tree(get_global_allocator());
+        tree.append(this->_output_folder);
+        auto folders_count = folders.count();
+        if (folders_count < 1) folders_count = 1;
+        for (usize i = 0; i < folders_count - 1; ++i) {
+            auto folder = folders[i];
+            tree.append('/');
+            tree.append(folder);
+            tree.append_null(false);
+            create_folder(tree.to_string_view(true));
+        }
+    }
+
     bool Cmd::build(bool run, bool force_rebuilt)
     {
-        // @TODO implement output folder, so that it will not put trash files inside a project
         const auto compiler = get_compiler();
         bool result = false;
         bool needs_to_rebuilt = false;
 
         if (incremental_build) {
             ASSERT_TRUE(source_files.count == source_files_output.count);
+            create_folder(this->_output_folder);
             append_defines();
             { // Check if executable file exist
                 // @TODO check if executable is newer than all source files, right now it just checks if it exist or not
@@ -1978,7 +2042,10 @@ namespace Sl
             const auto mark = this->count;
             for (auto& file : source_files) {
                 // Create dependency
+                build_tree_of_folders(file);
                 output_file_object.clear();
+                output_file_object.append(_output_folder);
+                output_file_object.append('/');
                 output_file_object.append(strip_cpp_postfix(file));
                 if (compiler == FlagsCompiler::MSVC)
                     output_file_object.append("_cl.d");
@@ -2023,11 +2090,13 @@ namespace Sl
                 this->count = mark;
                 // Check and rebuild C/C++ file if needed
                 output_file_object.clear();
+                output_file_object.append(_output_folder);
+                output_file_object.append('/');
                 output_file_object.append(file.data, file.size);
                 output_file_object.append(".obj");
                 output_file_object.append_null(false);
                 const auto output_file_object_path = output_file_object.to_string_view(true);
-                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file))
+                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder))
                 {
                     if (compiler == FlagsCompiler::MSVC)
                         append("/c ");
@@ -2059,6 +2128,8 @@ namespace Sl
                 append_custom_flags();
                 append_output_name(compiler);
                 for (auto& file : source_files) {
+                    append(this->_output_folder);
+                    append('/');
                     append(file.data, file.size);
                     append(".obj");
                     append(' ');
@@ -2116,6 +2187,7 @@ namespace Sl
         output_contains_ext = false;
         incremental_build = true;
         output_name = {"a", 1, true, false};
+        _output_folder = {".ezbuild", 8, true, false};
     }
 
     void Cmd::print()
@@ -2282,11 +2354,13 @@ namespace Sl
     void rebuild_itself_args(bool force, ExecutableOptions options, int argc, char **argv, const char *source_path, ...)
     {
         ASSERT_TRUE(argc > 0);
+        LocalArray<StrView> saved_args(get_global_allocator());
         for (int i = 1; i < argc; ++i)
         {
-            if (memory_equals(argv[i], memory_strlen(argv[i]), "force", 5)) {
+            saved_args.push(argv[i]);
+            if (saved_args.last().equals("force")) {
+                saved_args.set_count(saved_args.count() - 1);
                 force = true;
-                break;
             }
         }
 
@@ -2350,6 +2424,9 @@ namespace Sl
         cmd.start_cpp(options);
         cmd.add_source_file(source_path);
         cmd.output_file(executable_name, true);
+        for (auto& arg : saved_args) {
+            cmd.add_run_argument(arg);
+        }
         cmd.add_run_argument("EZBUILD_REBUILT");
         bool run = true;
         if (!cmd.build(run)) {

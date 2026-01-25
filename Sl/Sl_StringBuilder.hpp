@@ -68,9 +68,6 @@ namespace Sl
             // no need to quote
             append(command.data, command.size);
         } else {
-            // we need to escape:
-            // 1. double quotes in the original arg
-            // 2. consequent backslashes before a double quote
             usize backslashes = 0;
             append("\"", 1);
             for (usize i = 0; i < command.size; ++i) {
@@ -79,7 +76,6 @@ namespace Sl
                     backslashes += 1;
                 } else {
                     if (x == '\"') {
-                        // escape backslashes (if any) and the double quote
                         for (usize k = 0; k < 1+backslashes; ++k) {
                             append('\\');
                         }
@@ -88,7 +84,6 @@ namespace Sl
                 }
                 append(x);
             }
-            // escape backslashes (if any)
             for (usize i = 0; i < backslashes; ++i) {
                 append('\\');
             }

@@ -65,7 +65,6 @@ namespace Sl
             if (++count > table.capacity * max_load) grow();
 
             const usize index = hash(key, table.capacity);
-            usize probed = index;
             for (usize i = index; i < table.capacity; ++i) {
                 auto& slot = table[i];
                 if (!slot.occupied) {
@@ -95,7 +94,6 @@ namespace Sl
             if (++count > table.capacity * max_load) grow();
 
             const usize index = hash(key, table.capacity);
-            usize probed = index;
             for (usize i = index; i < table.capacity; ++i) {
                 auto& slot = table[i];
                 if (!slot.occupied) {

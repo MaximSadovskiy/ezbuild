@@ -168,7 +168,7 @@ namespace Sl
                        data[i].~T();
                 } else {
                     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
-                    memory_copy((void*)new_data, needed_capacity_bytes, (void*)data, needed_capacity_bytes);
+                    memory_copy((void*)new_data, needed_capacity_bytes, (const void*)data, needed_capacity_bytes);
                 }
                 if (!_allocator) SL_ARRAY_FREE(data);
                 data = new_data;
@@ -283,9 +283,18 @@ namespace Sl
         }
 
         inline T* data() { return _data; }
-        inline usize count() const { return _count; }
         inline usize allocated_capacity() const { return _allocated_capacity; }
         inline bool is_heap_allocated() const { return _is_heap_allocated; }
+        inline usize count() const { return _count; }
+
+        inline void set_count(usize count) // Use it, if you know what you doing
+        {
+            ASSERT(!is_heap_allocated() || count <= _allocated_capacity,
+                "Count cannot be bigger than allocated count");
+            ASSERT(is_heap_allocated() || count <= SL_LOCAL_ARRAY_INIT_SIZE,
+                "Count cannot be bigger than storage amount");
+            _count = count;
+        }
 
         template<typename... Args>
         void push(Args&&... args) noexcept
