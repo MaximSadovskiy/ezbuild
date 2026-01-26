@@ -80,7 +80,7 @@ bool check_flags(const char* flag_str)
 
 bool build_cpp(Cmd& cmd, bool force_rebuilt)
 {
-    cmd.start_cpp(ExecutableOptions {.is_cpp = true,
+    cmd.start_build(ExecutableOptions {.is_cpp = true,
                            .incremental_build = true,
                            .optimize = FlagsOptimization::BASIC,
                            .warnings = FlagsWarning::ALL,
@@ -97,7 +97,7 @@ bool build_cpp(Cmd& cmd, bool force_rebuilt)
 
     ScopedLogger _(logger_colored);
     bool run = true;
-    return cmd.build(run, force_rebuilt);
+    return cmd.end_build(run, force_rebuilt);
 }
 
 int main(int argc, char **argv)

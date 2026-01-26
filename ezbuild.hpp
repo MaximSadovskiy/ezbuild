@@ -206,6 +206,7 @@ namespace Sl
     struct CmdOptions
     {
         bool reset_command = true;
+        bool print_command = true;
         bool wait_command = true; // does nothing if async is not NULL
         Processes* async = nullptr;
         ProcessDescriptor* stdin_desc = nullptr;
@@ -259,10 +260,10 @@ namespace Sl
     // This functions are responsible for С/C++ build
     //-------------------------------------------------------------------
         // Starts the build, appending some commands to internal buffer
-        void start_cpp(ExecutableOptions opt = {});
+        void start_build(ExecutableOptions opt = {});
         // End the build, flushing all the commands
-        bool build(bool run, bool force_rebuilt = false);
-    // Funtions down below can be called in between start_cpp() and build() in order to configure build steps
+        bool end_build(bool run, bool force_rebuilt = false);
+    // Funtions down below can be called in between start_build() and end_build() in order to configure build steps
         // Set output file name to provided one
         void output_file(StrView file, bool contains_ext = false);
         // Sets the folder, where all temporary files will be generated (optional)
@@ -1080,7 +1081,6 @@ namespace Sl
             cmd.push("cc", "--help");
         CmdOptions opt;
         opt.stdout_desc = &output;
-        opt.stderr_desc = &output;
         if (!cmd.execute(opt).wait()) return false;
 
         StrBuilder buffer(get_global_allocator());
@@ -1305,9 +1305,9 @@ namespace Sl
     Process Cmd::execute(CmdOptions opt)
     {
         trim();
-        print();
+        if (opt.print_command)
+            print();
         Process proc;
-
 #ifdef _WIN32
         BOOL success = false;
         PROCESS_INFORMATION procInfo;
@@ -1628,7 +1628,7 @@ namespace Sl
         }
     }
 
-    void Cmd::start_cpp(ExecutableOptions opt)
+    void Cmd::start_build(ExecutableOptions opt)
     {
         this->incremental_build = opt.incremental_build;
         const auto compiler = get_compiler();
@@ -2008,11 +2008,16 @@ namespace Sl
         }
     }
 
-    bool Cmd::build(bool run, bool force_rebuilt)
+    bool Cmd::end_build(bool run, bool force_rebuilt)
     {
         const auto compiler = get_compiler();
         bool result = false;
         bool needs_to_rebuilt = false;
+        if (source_files.count < 1) {
+            log_error("No source files were provided. Use add_source_file() to add some.\n");
+            ASSERT_DEBUG(source_files.count > 1);
+            return false;
+        }
 
         if (incremental_build) {
             ASSERT_TRUE(source_files.count == source_files_output.count);
@@ -2034,10 +2039,7 @@ namespace Sl
             }
 
             Processes procs = {};
-            const auto max_procs = max_concurent_procceses == 0 ?
-                        get_system_info().number_of_processors * 2 + 1 : max_concurent_procceses;
-            HashMap<StrView, bool> memoization;
-
+            const auto max_procs = max_concurent_procceses == 0 ? get_system_info().number_of_processors * 2 + 1 : max_concurent_procceses;
             StrBuilder output_file_object(get_global_allocator());
             const auto mark = this->count;
             for (auto& file : source_files) {
@@ -2077,15 +2079,16 @@ namespace Sl
                     CmdOptions options = {};
                     options.reset_command = false;
                     options.stdout_desc = &dependency_file;
-                    options.stderr_desc = &dependency_file;
                     if (compiler == FlagsCompiler::MSVC)
                         append("/nologo /showIncludes ");
                     else
                         append("-M ");
                     append(file.data, file.size);
-                    ScopedLogger _(logger_muted);
-                    if (!execute(options).wait()) return false;
-                    close_file(dependency_file);
+                    {
+                        ScopedLogger _(logger_muted);
+                        if (!execute(options).wait()) return false;
+                        close_file(dependency_file);
+                    }
                 }
                 this->count = mark;
                 // Check and rebuild C/C++ file if needed
@@ -2166,7 +2169,9 @@ namespace Sl
                 append(' ');
             }
             trim();
-            execute().wait();
+            CmdOptions opt;
+            opt.print_command = false;
+            execute(opt).wait();
         }
         clear();
         return result;
@@ -2421,7 +2426,7 @@ namespace Sl
         // If not debug, we mute old ezbuild trace
         ScopedLogger _(logger_muted);
     #endif
-        cmd.start_cpp(options);
+        cmd.start_build(options);
         cmd.add_source_file(source_path);
         cmd.output_file(executable_name, true);
         for (auto& arg : saved_args) {
@@ -2429,7 +2434,7 @@ namespace Sl
         }
         cmd.add_run_argument("EZBUILD_REBUILT");
         bool run = true;
-        if (!cmd.build(run)) {
+        if (!cmd.end_build(run)) {
             rename_file(old_binary_path_view, executable_name);
             exit(EXIT_FAILURE);
         }
