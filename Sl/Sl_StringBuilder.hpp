@@ -5,7 +5,7 @@
 #include "Sl_Array.hpp"
 
 #define SB_FORMAT "%.*s"
-#define SB_ARG(sv) (int)((sv).count), (sv).data
+#define SB_ARG(sv) (int)((sv).count()), (sv).data()
 
 namespace Sl
 {
@@ -27,8 +27,19 @@ namespace Sl
         void align(u16 alignment) noexcept;
         void cleanup() noexcept;
         Allocator* current_allocator() const noexcept;
-        char* to_cstring_alloc() const noexcept;
+        char* to_cstring_alloc(Allocator* allocator = nullptr) const noexcept;
         StrView to_string_view(bool is_null_terminated = false, bool is_wide = false) const noexcept;
+        StrBuilder& copy_from(const StrBuilder& other);
+        StrBuilder& operator<<(StrView str);
+        StrBuilder& operator<<(char val);
+        StrBuilder& operator<<(int val);
+        StrBuilder& operator<<(long val);
+        StrBuilder& operator<<(long long val);
+        StrBuilder& operator<<(unsigned val);
+        StrBuilder& operator<<(unsigned long val);
+        StrBuilder& operator<<(unsigned long long val);
+        StrBuilder& operator<<(double val);
+        bool operator==(const StrBuilder& other);
     };
 } // namespace Sl
 #endif // !SL_STRINGBUILDER_H
@@ -51,7 +62,7 @@ namespace Sl
     void StrBuilder::append_null(bool update_count) noexcept
     {
         append("\0", 1);
-        if (!update_count) count -= 1;
+        if (!update_count) _count -= 1;
     }
 
     void StrBuilder::append(StrView str) noexcept
@@ -93,7 +104,7 @@ namespace Sl
 
     void StrBuilder::align(u16 alignment) noexcept
     {
-        usize aligned_size = ALIGNMENT(count, alignment) - count;
+        usize aligned_size = ALIGNMENT(_count, alignment) - _count;
         for (; aligned_size > 0; --aligned_size) {
             append_null();
         }
@@ -141,23 +152,96 @@ namespace Sl
         return _allocator;
     }
 
-    char* StrBuilder::to_cstring_alloc() const noexcept
+    char* StrBuilder::to_cstring_alloc(Allocator* allocator) const noexcept
     {
-        usize size = count * sizeof(char);
+        usize size = _count * sizeof(char);
         char* str;
-        if (_allocator) str = (char*)_allocator->allocate(size + 1);
+        if (allocator == nullptr) allocator = _allocator;
+        if (allocator) str = (char*)allocator->allocate(size + 1);
         else return nullptr;
         ASSERT_DEBUG(str);
 
-        if (this->data && size > 0)
-            memory_copy(str, size, this->data, size);
+        if (_data && size > 0)
+            memory_copy(str, size, _data, size);
         str[size] = '\0';
         return str;
     }
 
     Sl::StrView StrBuilder::to_string_view(bool is_null_terminated, bool is_wide) const noexcept
     {
-        return Sl::StrView(data, count * sizeof(char), is_null_terminated, is_wide);
+        return Sl::StrView(_data, _count * sizeof(char), is_null_terminated, is_wide);
+    }
+
+    StrBuilder& StrBuilder::operator<<(StrView str)
+    {
+        append(str);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(char val)
+    {
+        append(val);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(int val)
+    {
+        char buf[128];
+        sprintf(buf, "%d", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(long val)
+    {
+        char buf[128];
+        sprintf(buf, "%ld", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(long long val)
+    {
+        char buf[128];
+        sprintf(buf, "%lld", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(unsigned val)
+    {
+        char buf[128];
+        sprintf(buf, "%u", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(unsigned long val)
+    {
+        char buf[128];
+        sprintf(buf, "%lu", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(unsigned long long val)
+    {
+        char buf[128];
+        sprintf(buf, "%llu", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::operator<<(double val)
+    {
+        char buf[128];
+        sprintf(buf, "%.17g", val);
+        append(buf);
+        return *this;
+    }
+    StrBuilder& StrBuilder::copy_from(const StrBuilder& other)
+    {
+        resize(other._capacity);
+        _count = other._count;
+        memory_copy((void*)_data, _count, (void*)other._data, other._count);
+        return *this;
+    }
+    bool StrBuilder::operator==(const StrBuilder& other)
+    {
+        if (_count != other._count) return false;
+        return memory_equals((void*)_data, _count, (void*)other._data, other._count);
     }
 } // namespace Sl
 #endif // !SL_IMPLEMENTATION

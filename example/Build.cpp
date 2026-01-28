@@ -29,7 +29,7 @@ bool file_example(const char* file_path)
     buffer.append("file_example:\n");
     buffer.append("  123\n");
     buffer.append("  test");
-    if (!write_to_file(file, buffer.data, buffer.count)) {
+    if (!write_to_file(file, buffer.data(), buffer.count())) {
         buffer.clear();
         return false;
     }
@@ -130,13 +130,13 @@ int main(int argc, char **argv)
 
     printf("--------------------------------------\n");
 
-    auto rand_number_from_2_to_5 = 2 + rand() % 4;
-    if (!sleep_example(cmd, rand_number_from_2_to_5))
+    if (!build_cpp(cmd, force_rebuilt))
         return 1;
 
     printf("--------------------------------------\n");
 
-    if (!build_cpp(cmd, force_rebuilt))
+    auto rand_number_from_2_to_5 = 2 + rand() % 4;
+    if (!sleep_example(cmd, rand_number_from_2_to_5))
         return 1;
 
     printf("--------------------------------------\n");

@@ -11,26 +11,27 @@ namespace Sl
     template <typename T, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
     struct Array
     {
-        T* data;
-        usize capacity;
-        usize count;
+    protected:
+        T* _data;
+        usize _capacity;
+        usize _count;
         Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of SL_ARRAY_REALLOC
-
+    public:
         static const usize INVALID_INDEX = -1;
 
         Array(Allocator* allocator = nullptr)
         {
             this->_allocator = allocator;
-            this->data = nullptr;
-            this->capacity = 0;
-            this->count = 0;
+            this->_data = nullptr;
+            this->_capacity = 0;
+            this->_count = 0;
         }
 
         template<typename... Args>
         void push(Args&&... args) noexcept
         {
-            resize(count + 1);
-            ::new (data + count++) T(std::forward<Args>(args)...);
+            resize(_count + 1);
+            ::new (_data + _count++) T(std::forward<Args>(args)...);
         }
 
         void push_many(const T* new_data, usize new_count) noexcept
@@ -38,119 +39,134 @@ namespace Sl
             ASSERT(new_data != nullptr, "Cannot push null array");
             if (new_data == nullptr) return;
 
-            resize(this->count + new_count);
+            resize(this->_count + new_count);
             for (usize i = 0; i < new_count; ++i)
-                data[this->count++] = new_data[i];
+                _data[this->_count++] = new_data[i];
         }
 
-        void remove_unordered(usize index) noexcept
+        T* data() const { return _data; };
+        usize capacity() const { return _capacity; };
+        usize count() const { return _count; };
+        Allocator* allocator() const { return _allocator; }
+        void set_allocator(Allocator* allocator)
         {
-            ASSERT(count > 0 && index <= count, "Index out of range");
-            if (count == 0 || index >= count) return;
-
-            IF_CONSTEXPR (cpp_compliant_and_slow) {
-                // I don't know what's std::vector devs were smoking
-                if (index != count - 1) {
-                    std::swap(data[index], data[--count]);
-                } else {
-                    data[index].~T();
-                    --count;
-                }
-            }
-            else
-                data[index] = std::move(data[--count]);
+            cleanup();
+            _allocator = allocator;
+        }
+        void set_count(usize count)
+        { // Use it, if you know what you are doing
+            ASSERT(count <= _capacity, "Count cannot be bigger than allocated capacity");
+            _count = count;
         }
 
         T& get(usize index) noexcept
         {
-            ASSERT(count > index, "Index out of range");
-            return data[index];
+            ASSERT(_count > index, "Index out of range");
+            return _data[index];
         }
 
         T& get_unsafe(usize index) noexcept
         {
-            return data[index];
+            return _data[index];
+        }
+
+        void remove_unordered(usize index) noexcept
+        {
+            ASSERT(_count > 0 && index <= _count, "Index out of range");
+            if (_count == 0 || index >= _count) return;
+
+            IF_CONSTEXPR (cpp_compliant_and_slow) {
+                // I don't know what's std::vector devs were smoking
+                if (index != _count - 1) {
+                    std::swap(_data[index], _data[--_count]);
+                } else {
+                    _data[index].~T();
+                    --_count;
+                }
+            }
+            else
+                _data[index] = std::move(_data[--_count]);
         }
 
         template<typename Function>
         void forEach(Function&& func) noexcept {
-            for (usize i = 0; i < count; ++i) {
-                func(data[i]);
+            for (usize i = 0; i < _count; ++i) {
+                func(_data[i]);
             }
         }
 
         template<typename Function>
         void forEachIndexed(Function&& func) noexcept {
-            for (usize i = 0; i < count; ++i) {
-                func(i, data[i]);
+            for (usize i = 0; i < _count; ++i) {
+                func(i, _data[i]);
             }
         }
 
         T& first() noexcept { return get(0); }
-        T& last() noexcept { return get(count - 1); }
-        bool is_empty() noexcept { return count < 1; }
+        T& last() noexcept { return get(_count - 1); }
+        bool is_empty() noexcept { return _count < 1; }
 
         usize find_first(T val) const
         {
-            for (usize i = 0; i < count; ++i) {
-                if (data[i] == val) return i;
+            for (usize i = 0; i < _count; ++i) {
+                if (_data[i] == val) return i;
             }
             return INVALID_INDEX;
         }
         usize find_last(T val) const
         {
             usize index = INVALID_INDEX;
-            for (usize i = 0; i < count; ++i) {
-                if (data[i] == val) index = i;
+            for (usize i = 0; i < _count; ++i) {
+                if (_data[i] == val) index = i;
             }
             return index;
         }
 
         bool contains(T val) const { return find_first(val) != INVALID_INDEX; }
         T& operator[](usize index) noexcept { return get(index); }
-        T* begin() noexcept { return data; }
-        T* end() noexcept { return data + count; }
+        T* begin() noexcept { return _data; }
+        T* end() noexcept { return _data + _count; }
 
         void pop() noexcept
         {
-            ASSERT(count > 0, "Cannot pop from empty array");
-            if (count < 1) return;
+            ASSERT(_count > 0, "Cannot pop from empty array");
+            if (_count < 1) return;
 
             IF_CONSTEXPR (cpp_compliant_and_slow) {
-                data[count - 1].~T();
+                _data[_count - 1].~T();
             }
-            count -= 1;
+            _count -= 1;
         }
 
         // Does not shrink, if needed: use reserve()
         void resize(usize needed_capacity) noexcept
         {
-            if (needed_capacity > capacity)
+            if (needed_capacity > _capacity)
             {
-                auto old_capacity = capacity;
-                if (capacity == 0) capacity = 32;
-                while (capacity < needed_capacity) capacity *= 2;
+                auto old_capacity = _capacity;
+                if (_capacity == 0) _capacity = 32;
+                while (_capacity < needed_capacity) _capacity *= 2;
 
                 if (_allocator)
-                    data = (T*)_allocator->reallocate(data, old_capacity * ALIGNMENT(sizeof(T), alignof(T)), capacity * ALIGNMENT(sizeof(T), alignof(T)));
+                    _data = (T*)_allocator->reallocate(_data, old_capacity * ALIGNMENT(sizeof(T), alignof(T)), _capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 else
-                    data = (T*)SL_ARRAY_REALLOC(data, capacity * ALIGNMENT(sizeof(T), alignof(T)));
-                ASSERT_DEBUG(data != nullptr);
+                    _data = (T*)SL_ARRAY_REALLOC(_data, _capacity * ALIGNMENT(sizeof(T), alignof(T)));
+                ASSERT_DEBUG(_data != nullptr);
             }
         }
 
         void reserve(usize needed_capacity) noexcept
         {
-            if (needed_capacity > capacity) {
+            if (needed_capacity > _capacity) {
                 if (_allocator)
-                    data = (T*)_allocator->reallocate(data, capacity * ALIGNMENT(sizeof(T), alignof(T)), needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
+                    _data = (T*)_allocator->reallocate(_data, _capacity * ALIGNMENT(sizeof(T), alignof(T)), needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 else
-                    data = (T*)SL_ARRAY_REALLOC(data, needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
-                capacity = needed_capacity;
-                ASSERT_DEBUG(data != nullptr);
+                    _data = (T*)SL_ARRAY_REALLOC(_data, needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
+                _capacity = needed_capacity;
+                ASSERT_DEBUG(_data != nullptr);
                 IF_CONSTEXPR (cpp_compliant_and_slow) {
-                    for (usize i = count; i < capacity; ++i)
-                        ::new (data + i) T(static_cast<T&&>(data[i]));
+                    for (usize i = _count; i < _capacity; ++i)
+                        ::new (_data + i) T(static_cast<T&&>(_data[i]));
                 }
             } else {
                 const auto needed_capacity_bytes = needed_capacity * ALIGNMENT(sizeof(T), alignof(T));
@@ -160,56 +176,56 @@ namespace Sl
                 else
                     new_data = (T*)SL_ARRAY_REALLOC(nullptr, needed_capacity_bytes);
                 ASSERT_DEBUG(new_data != nullptr);
-                const auto new_count = needed_capacity < count ? needed_capacity : count;
+                const auto new_count = needed_capacity < _count ? needed_capacity : _count;
                 IF_CONSTEXPR (cpp_compliant_and_slow) {
                    for (usize i = 0; i < new_count; ++i)
-                       new_data[i] = std::move(data[i]);
-                   for (usize i = new_count; i < count; ++i)
-                       data[i].~T();
+                       new_data[i] = std::move(_data[i]);
+                   for (usize i = new_count; i < _count; ++i)
+                       _data[i].~T();
                 } else {
                     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
-                    memory_copy((void*)new_data, needed_capacity_bytes, (const void*)data, needed_capacity_bytes);
+                    memory_copy((void*)new_data, needed_capacity_bytes, (const void*)_data, needed_capacity_bytes);
                 }
-                if (!_allocator) SL_ARRAY_FREE(data);
-                data = new_data;
-                capacity = needed_capacity;
-                count = new_count;
+                if (!_allocator) SL_ARRAY_FREE(_data);
+                _data = new_data;
+                _capacity = needed_capacity;
+                _count = new_count;
             }
         }
 
         void memzero() noexcept
         {
-            if (data) memory_zero(data, capacity * ALIGNMENT(sizeof(T), alignof(T)));
+            if (_data) memory_zero(_data, _capacity * ALIGNMENT(sizeof(T), alignof(T)));
         }
 
         void clear() noexcept
         {
             IF_CONSTEXPR (cpp_compliant_and_slow) {
-                for (usize i = 0; i < count; ++i) {
-                    data[i].~T();
+                for (usize i = 0; i < _count; ++i) {
+                    _data[i].~T();
                 }
             }
-            count = 0;
+            _count = 0;
         }
 
         void cleanup() noexcept
         {
             clear();
-            if (!_allocator) SL_ARRAY_FREE(data);
-            data = nullptr;
-            capacity = 0;
+            if (!_allocator) SL_ARRAY_FREE(_data);
+            _data = nullptr;
+            _capacity = 0;
         }
 
         Array& operator=(Array& arr) noexcept
         {
             if ((void*) this != (void*) &arr) {
                 cleanup();
-                this->data = arr.data;
-                this->count = arr.count;
-                this->capacity = arr.capacity;
-                arr.data = nullptr;
-                arr.count = 0;
-                arr.capacity = 0;
+                this->_data = arr._data;
+                this->_count = arr._count;
+                this->_capacity = arr._capacity;
+                arr._data = nullptr;
+                arr._count = 0;
+                arr._capacity = 0;
             }
             return *this;
         }
@@ -227,32 +243,32 @@ namespace Sl
     // ----------------------------------------------
         T& get(usize index) const noexcept
         {
-            ASSERT(count > index, "Index out of range");
-            return data[index];
+            ASSERT(_count > index, "Index out of range");
+            return _data[index];
         }
         T& get_unsafe(usize index) const noexcept
         {
-            return data[index];
+            return _data[index];
         }
 
         T& operator[](usize index) const noexcept { return get(index); }
-        const T* begin() const noexcept { return data; }
-        const T* end() const noexcept { return data + count; }
+        const T* begin() const noexcept { return _data; }
+        const T* end() const noexcept { return _data + _count; }
 
         T& first() const noexcept { return get(0); }
-        T& last() const noexcept { return get(count - 1); }
+        T& last() const noexcept { return get(_count - 1); }
 
         template<typename Function>
         void forEach(Function&& func) const noexcept {
-            for (usize i = 0; i < count; ++i) {
-                func(data[i]);
+            for (usize i = 0; i < _count; ++i) {
+                func(_data[i]);
             }
         }
 
         template<typename Function>
         void forEachIndexed(Function&& func) const noexcept {
-            for (usize i = 0; i < count; ++i) {
-                func(i, data[i]);
+            for (usize i = 0; i < _count; ++i) {
+                func(i, _data[i]);
             }
         }
     };

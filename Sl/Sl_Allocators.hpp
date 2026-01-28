@@ -525,7 +525,7 @@ namespace Sl
 
         ArenaRegion* region = NULL;
         bool found_region = false;
-        for (usize i = this->_current_region_index; i < _regions.count; ++i) {
+        for (usize i = this->_current_region_index; i < _regions.count(); ++i) {
             region = &_regions.get(i);
             if (region->cursor + aligned_size <= region->capacity || region->data == NULL) {
                 found_region = true;
@@ -536,7 +536,7 @@ namespace Sl
         if (!found_region) {
             _regions.push(ArenaRegion{});
             region = &_regions.last();
-            this->_current_region_index = _regions.count - 1;
+            this->_current_region_index = _regions.count() - 1;
         }
 
         if (region->data == NULL) {
@@ -589,18 +589,18 @@ namespace Sl
             return;
         }
 
-        if (snapshot->region_index < _regions.count) {
+        if (snapshot->region_index < _regions.count()) {
             auto& region = _regions[snapshot->region_index];
             region.cursor = snapshot->index;
             _current_region_index = snapshot->region_index;
-            for (usize i = snapshot->region_index + 1; i < _regions.count; ++i)
+            for (usize i = snapshot->region_index + 1; i < _regions.count(); ++i)
                 _regions[i].cursor = 0;
         }
     }
 
     Snapshot* ArenaAllocator::snapshot()
     {
-        if (_regions.count < 1) allocate(0, 0); // initilize regions if empty
+        if (_regions.count() < 1) allocate(0, 0); // initilize regions if empty
 
         const auto current_index = _regions[_current_region_index].cursor;
         ArenaSnapshot* snapshot = (ArenaSnapshot*) temp_allocate(sizeof(ArenaSnapshot), alignof(ArenaSnapshot));

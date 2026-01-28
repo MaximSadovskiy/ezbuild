@@ -38,7 +38,7 @@
 #endif // _WIN32
 
 #ifndef EZBUILD_ERROR_MESSAGE_SIZE
-#   define EZBUILD_ERROR_MESSAGE_SIZE (1024 * 12)
+#   define EZBUILD_ERROR_MESSAGE_SIZE (1024 * 8)
 #endif // !EZBUILD_ERROR_MESSAGE_SIZE
 
 namespace Sl
@@ -154,16 +154,23 @@ namespace Sl
         EnumSize
     };
 
+    enum Result
+    {
+        SL_ERROR = -1,
+        SL_FALSE = 0,
+        SL_TRUE  = 1,
+    };
+
     // Checks if build script needs to be rebuilt and reruns it
     #define rebuild_itself_force(options, argc, argv, ...) Sl::rebuild_itself_args(true, (options), (argc), (argv), __FILE__, __VA_ARGS__, NULL)
     #define rebuild_itself(options, argc, argv, ...) Sl::rebuild_itself_args(false, (options), (argc), (argv), __FILE__, __VA_ARGS__, NULL)
     void rebuild_itself_args(bool force, ExecutableOptions options, int argc, char **argv, const char *source_path, ...);
     // If build script was rebuilt last time - returns true
     bool was_script_rebuilt(int argc, char** argv);
-    // Compares time of depency files with provided file. If true, that means file needs to be rebuilt
-    bool file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
-    // Must have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
-    bool file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "");
+    // Compares time of depency files with provided file. If true, that means file needs to be rebuilt. Useful for non C/C++ builds.
+    Result file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
+    // Must-have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "");
     // Checks if provided argument is supported for current compiler
     bool is_flag_supported_cpp(StrView expected_flag);
     // Returns all supported flags for current compiler
@@ -468,7 +475,7 @@ namespace Sl
         } else {
             builder.append(path.data, path.size);
             builder.append_null();
-            terminated_path = builder.data;
+            terminated_path = builder.data();
         }
 
         #ifdef _WIN32
@@ -957,11 +964,11 @@ namespace Sl
         HANDLE hFind = INVALID_HANDLE_VALUE;
         if (is_wide) {
             attributes = &dataw.dwFileAttributes;
-            hFind = FindFirstFileW((LPCWSTR)folder_path_terminated.data, &dataw);
+            hFind = FindFirstFileW((LPCWSTR)folder_path_terminated.data(), &dataw);
             cFileName = (const char*)dataw.cFileName;
         } else {
             attributes = &data.dwFileAttributes;
-            hFind = FindFirstFileA(folder_path_terminated.data, &data);
+            hFind = FindFirstFileA(folder_path_terminated.data(), &data);
             cFileName = data.cFileName;
         }
 
@@ -1066,7 +1073,8 @@ namespace Sl
     }
     bool get_supported_flags(Array<StrView>& flags)
     {
-        Cmd cmd = {}; cmd._allocator = get_global_allocator();
+        Cmd cmd = {};
+        cmd.set_allocator(get_global_allocator());
         FileHandle output;
         const char* flags_file = "flag.temp";
         if (!create_file(flags_file, output, false, FlagsFile::FILE_OPEN_READ_WRITE)) return false;
@@ -1146,8 +1154,8 @@ namespace Sl
         DWORD bytes_read = 0;
         usize read_size = 0;
         do {
-            read_size = file_size - buffer.count;
-            auto* current_data_ptr = buffer.data + buffer.count;
+            read_size = file_size - buffer.count();
+            auto* current_data_ptr = buffer.data() + buffer.count();
             if (ReadFile(file_handle, current_data_ptr, (DWORD)read_size, &bytes_read, NULL)) {
                 bool result = true;
                 while (bytes_read == 0 && read_size > 0) {
@@ -1161,12 +1169,12 @@ namespace Sl
                     report_error("Could not read file");
                     return false;
                 }
-                buffer.count += bytes_read;
+                buffer.set_count(buffer.count() + bytes_read);
             } else {
                 report_error("Could not read file");
                 return false;
             }
-        } while(file_size > 0 && buffer.count < file_size);
+        } while(file_size > 0 && buffer.count() < file_size);
     #else
         usize read_size = file_size;
         usize total_read = 0;
@@ -1203,30 +1211,30 @@ namespace Sl
 
         return read_entire_file(file_handle, buffer);
     }
-    bool file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files)
+    Result file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files)
     {
-        bool result = false;
+        Result result = Result::SL_FALSE;
         FileHandle h;
-        if (!open_file(file, h)) return true;
+        if (!open_file(file, h)) return Result::SL_ERROR;
 
         FileTime dependency_time;
         FileTime file_time;
         if (!get_file_time(h, file_time)) {
-            DEFER_RETURN(true);
+            DEFER_RETURN(Result::SL_ERROR);
         }
 
         for (auto& dependency : dependency_files) {
             FileHandle dependency_h;
             if (!open_file(dependency, dependency_h)) {
-                DEFER_RETURN(true);
+                DEFER_RETURN(Result::SL_ERROR);
             }
             auto res = get_file_time(dependency_h, dependency_time);
             close_file(dependency_h);
             if (!res) {
-                DEFER_RETURN(true);
+                DEFER_RETURN(Result::SL_ERROR);
             }
             if (compare_file_time(file_time.last_write_time, dependency_time.last_write_time) < 0) {
-                DEFER_RETURN(true);
+                DEFER_RETURN(Result::SL_TRUE);
             }
         }
     end:
@@ -1314,8 +1322,7 @@ namespace Sl
         ZeroMemory(&procInfo, sizeof(PROCESS_INFORMATION));
 
         append_null(false);
-        const bool is_wide = StrView(data, count).contains_non_ascii_char();
-        if (is_wide)
+        if (StrView(_data, _count).contains_non_ascii_char())
         {
             STARTUPINFOW startInfo;
             ZeroMemory(&startInfo, sizeof(startInfo));
@@ -1338,7 +1345,7 @@ namespace Sl
                 if (startInfo.hStdError == INVALID_HANDLE_VALUE) log_warning("Could not get STD_ERROR_HANDLE\n");
             }
             startInfo.dwFlags = STARTF_USESTDHANDLES;
-            success = CreateProcessW(NULL, (LPWSTR)utf8_to_utf16_windows(data).data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
+            success = CreateProcessW(NULL, (LPWSTR)utf8_to_utf16_windows(_data).data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
         } else {
             STARTUPINFOA startInfo;
             ZeroMemory(&startInfo, sizeof(startInfo));
@@ -1361,10 +1368,10 @@ namespace Sl
                 if (startInfo.hStdError == INVALID_HANDLE_VALUE) log_warning("Could not get STD_ERROR_HANDLE\n");
             }
             startInfo.dwFlags = STARTF_USESTDHANDLES;
-            success = CreateProcessA(NULL, data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
+            success = CreateProcessA(NULL, _data, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
         }
         if (!success) {
-            report_error("Could not create process \"" SV_FORMAT "\"", (int)count, data);
+            report_error("Could not create process \"" SV_FORMAT "\"", (int)_count, _data);
             if (opt.reset_command) reset();
             return Process(INVALID_PROCESS);
         }
@@ -1446,10 +1453,10 @@ namespace Sl
     void Cmd::trim()
     {
         auto view = to_string_view();
-        count -= view.trim_right();
+        _count -= view.trim_right();
         auto left_spaces = view.trim_left();
-        memory_copy(data, count - left_spaces, data + left_spaces, count - left_spaces);
-        count -= left_spaces;
+        memory_copy(_data, _count - left_spaces, _data + left_spaces, _count - left_spaces);
+        _count -= left_spaces;
     }
 
     void Cmd::push_flag_output(FlagsCompiler compiler, bool output_to_obj)
@@ -1755,14 +1762,14 @@ namespace Sl
     void Cmd::append_linker_flags(FlagsCompiler compiler)
     {
         if (compiler == FlagsCompiler::MSVC) {
-            if (linker_flags.count > 0) append("/link");
+            if (linker_flags.count() > 0) append("/link");
         } else {
-            if (linker_flags.count > 0) append("-Wl,");
+            if (linker_flags.count() > 0) append("-Wl,");
         }
-        for (usize i = 0; i < linker_flags.count; ++i) {
-            auto& flag = linker_flags.data[i];
+        for (usize i = 0; i < linker_flags.count(); ++i) {
+            auto& flag = linker_flags[i];
             append(flag.data, flag.size);
-            if (i + 1 < linker_flags.count)
+            if (i + 1 < linker_flags.count())
                 append(",");
         }
     }
@@ -1849,7 +1856,7 @@ namespace Sl
                 do {
                     auto index = depency_view.find_first_occurrence_word("\\./");
                     if (index == StrView::INVALID_INDEX) {
-                        if (fixed_path_depency.count > 0)
+                        if (fixed_path_depency.count() > 0)
                             fixed_path_depency.append(depency_view);
                         break;
                     }
@@ -1857,7 +1864,7 @@ namespace Sl
                     fixed_path_depency.append('/');
                     depency_view.chop_left(3);
                 } while(depency_view.size > 0);
-                if (fixed_path_depency.count > 0) {
+                if (fixed_path_depency.count() > 0) {
                     fixed_path_depency.append_null(false);
                     depency_view = fixed_path_depency.to_string_view(false);
                 }
@@ -1929,31 +1936,31 @@ namespace Sl
         return true;
     }
 
-    bool file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder)
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder)
     {
         ASSERT(obj.data != nullptr && obj.size > 0, "Provide correct object file path");
         ASSERT(src_file.data != nullptr && src_file.size > 0, "Provide correct source file path");
 
         ScopedLogger _(logger_muted);
         FileHandle obj_handle = INVALID_FILE_HANDLE;
-        if (!open_file(obj, obj_handle)) return true;
+        if (!open_file(obj, obj_handle)) return Result::SL_ERROR;
 
         FileTime file_time = {};
         if (!get_file_time(obj_handle, file_time)) {
             close_file(obj_handle);
-            return true;
+            return Result::SL_ERROR;
         }
         FileTimeUnit obj_time = file_time.last_write_time;
         close_file(obj_handle);
 
         s32 compare;
         if (!compare_file_time_with_provided(src_file, obj_time, compare))
-            return true;
+            return Result::SL_TRUE;
         if (compare < 0)
-            return true;
+            return Result::SL_TRUE;
 
         Array<StrView> deps(get_global_allocator());
-        if (!read_dependencies(src_file, deps, output_folder)) return true;
+        if (!read_dependencies(src_file, deps, output_folder)) return Result::SL_ERROR;
 
         StrBuilder escaped_dependency(get_global_allocator());
         for (auto& dependency : deps) {
@@ -1972,11 +1979,11 @@ namespace Sl
             auto dependency_view = escaped_dependency.to_string_view(true);
             s32 compare;
             if (!compare_file_time_with_provided(dependency_view, obj_time, compare))
-                return true;
+                return Result::SL_TRUE;
             if (compare < 0)
-                return true;
+                return Result::SL_TRUE;
         }
-        return false;
+        return Result::SL_FALSE;
     }
 
     static StrView strip_cpp_postfix(StrView file)
@@ -2013,14 +2020,14 @@ namespace Sl
         const auto compiler = get_compiler();
         bool result = false;
         bool needs_to_rebuilt = false;
-        if (source_files.count < 1) {
+        if (source_files.count() < 1) {
             log_error("No source files were provided. Use add_source_file() to add some.\n");
-            ASSERT_DEBUG(source_files.count > 1);
+            ASSERT_DEBUG(source_files.count() > 1);
             return false;
         }
 
         if (incremental_build) {
-            ASSERT_TRUE(source_files.count == source_files_output.count);
+            ASSERT_TRUE(source_files.count() == source_files_output.count());
             create_folder(this->_output_folder);
             append_defines();
             { // Check if executable file exist
@@ -2041,7 +2048,7 @@ namespace Sl
             Processes procs = {};
             const auto max_procs = max_concurent_procceses == 0 ? get_system_info().number_of_processors * 2 + 1 : max_concurent_procceses;
             StrBuilder output_file_object(get_global_allocator());
-            const auto mark = this->count;
+            const auto mark = this->_count;
             for (auto& file : source_files) {
                 // Create dependency
                 build_tree_of_folders(file);
@@ -2090,7 +2097,7 @@ namespace Sl
                         close_file(dependency_file);
                     }
                 }
-                this->count = mark;
+                this->_count = mark;
                 // Check and rebuild C/C++ file if needed
                 output_file_object.clear();
                 output_file_object.append(_output_folder);
@@ -2099,7 +2106,7 @@ namespace Sl
                 output_file_object.append(".obj");
                 output_file_object.append_null(false);
                 const auto output_file_object_path = output_file_object.to_string_view(true);
-                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder))
+                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder) != Result::SL_FALSE)
                 {
                     if (compiler == FlagsCompiler::MSVC)
                         append("/c ");
@@ -2115,13 +2122,13 @@ namespace Sl
                     CmdOptions options = {};
                     options.reset_command = false;
                     options.async = &procs;
-                    if (procs.count >= max_procs) {
+                    if (procs.count() >= max_procs) {
                         if (!procs.wait_all())
                             return false;
                     }
                     execute(options);
                 }
-                this->count = mark;
+                this->_count = mark;
             }
             if (!procs.wait_all())
                 return false;
@@ -2141,7 +2148,7 @@ namespace Sl
                 log_info("Linking executable...\n");
                 result = execute().wait();
             } else {
-                count = 0;
+                _count = 0;
                 result = true;
                 log_info("Everything is up to date\n");
             }
@@ -2161,9 +2168,9 @@ namespace Sl
             result = execute().wait();
         }
         if (result && run) {
-            count = 0;
+            _count = 0;
             append_output_name(compiler, false);
-            log_info("Running: " SB_FORMAT "\n", (int)count, data);
+            log_info("Running: " SB_FORMAT "\n", (int)_count, _data);
             for (auto& arg : custom_arguments) {
                 append(arg);
                 append(' ');
@@ -2179,16 +2186,16 @@ namespace Sl
 
     void Cmd::clear()
     {
-        count = 0;
-        source_paths.count = 0;
-        source_files.count = 0;
-        source_files_output.count = 0;
-        link_libraries.count = 0;
-        link_libraries_paths.count = 0;
-        linker_flags.count = 0;
-        custom_flags.count = 0;
-        custom_arguments.count = 0;
-        defines.count = 0;
+        _count = 0;
+        source_paths.set_count(0);
+        source_files.set_count(0);
+        source_files_output.set_count(0);
+        link_libraries.set_count(0);
+        link_libraries_paths.set_count(0);
+        linker_flags.set_count(0);
+        custom_flags.set_count(0);
+        custom_arguments.set_count(0);
+        defines.set_count(0);
         output_contains_ext = false;
         incremental_build = true;
         output_name = {"a", 1, true, false};
@@ -2197,7 +2204,7 @@ namespace Sl
 
     void Cmd::print()
     {
-        log_info("CMD: " SV_FORMAT "\n", static_cast<int>(count), data);
+        log_info("CMD: " SV_FORMAT "\n", static_cast<int>(_count), _data);
     }
 
     FlagsCompiler get_compiler()
@@ -2285,30 +2292,29 @@ namespace Sl
 
     const char* get_error_message()
     {
-        const auto error = get_last_error_code();
+        const auto error_code = get_last_error_code();
     #if defined(_WIN32)
-        static const char* errorMsg[EZBUILD_ERROR_MESSAGE_SIZE] = {0};
-        if (error == 0) {
+        static const char* error_msg[EZBUILD_ERROR_MESSAGE_SIZE] = {0};
+        if (error_code == 0) {
             log_error("Could not get error message\n");
             return nullptr;
         } else {
             auto msgSize = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                                            NULL,
-                                           error,
+                                           error_code,
                                            MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
-                                           (LPSTR) &errorMsg,
+                                           (LPSTR) &error_msg,
                                            EZBUILD_ERROR_MESSAGE_SIZE - 1,
                                            NULL);
             if (msgSize == 0) {
                 log_error("Could not format error message\n");
                 return nullptr;
             }
-            return (const char*)errorMsg;
+            return (const char*)error_msg;
         }
     #else
-        return (const char*) strerror(error);
+        return (const char*) strerror(error_code);
     #endif // !_WIN32
-        return nullptr;
     }
 
     const char* FileEntry::get_type_name() const
@@ -2322,24 +2328,6 @@ namespace Sl
             case FileType::OTHER: return "Other";
             default: return "Unknown";
         }
-    }
-
-    inline static void fix_windows_exe_bs(StrView& executable_name)
-    {
-        // This function needed, because in windows you can call a executable without its extension
-        #ifdef _WIN32
-            StrView exe_ext = ".exe";
-            if (!executable_name.ends_with(exe_ext)) {
-                StrBuilder new_str(get_global_allocator());
-                new_str.reserve(executable_name.size + exe_ext.size);
-                new_str.append(executable_name);
-                new_str.append(exe_ext);
-                auto* exec = new_str.to_cstring_alloc();
-                executable_name = StrView(exec, new_str.count, true, false);
-            }
-        #else
-            UNUSED(executable_name);
-        #endif // !_WIN32
     }
 
     bool was_script_rebuilt(int argc, char** argv)
@@ -2359,6 +2347,7 @@ namespace Sl
     void rebuild_itself_args(bool force, ExecutableOptions options, int argc, char **argv, const char *source_path, ...)
     {
         ASSERT_TRUE(argc > 0);
+        const auto system = get_system();
         LocalArray<StrView> saved_args(get_global_allocator());
         for (int i = 1; i < argc; ++i)
         {
@@ -2373,7 +2362,16 @@ namespace Sl
         source_paths.push(source_path);
 
         StrView executable_name(argv[0]);
-        fix_windows_exe_bs(executable_name);
+
+        StrView exe_ext = ".exe";
+        if (system == FlagsSystem::WINDOWS && !executable_name.ends_with(exe_ext)) {
+            StrBuilder new_str(get_global_allocator());
+            new_str.reserve(executable_name.size + exe_ext.size);
+            new_str.append(executable_name);
+            new_str.append(exe_ext);
+            auto* exec = new_str.to_cstring_alloc();
+            executable_name = StrView(exec, new_str.count(), true, false);
+        }
 
         va_list args;
         va_start(args, source_path);
@@ -2388,19 +2386,23 @@ namespace Sl
         SetConsoleOutputCP(CP_UTF8);
     #endif // !EZBUILD_DONT_SET_CONSOLE && _WIN32
 
-        if (!force && !file_needs_rebuilt(executable_name, source_paths)) {
+        auto needs_rebuilt_executable = file_needs_rebuilt(executable_name, source_paths);
+        if (!force && needs_rebuilt_executable == Result::SL_FALSE) {
             source_paths.cleanup();
             temp_reset();
             return;
         }
+        if (needs_rebuilt_executable == Result::SL_ERROR) {
+            report_error("Error happened when checking dependencies, make sure you running build script at his created path");
+        }
 
-        StrBuilder old_binary_path(get_global_allocator());
-        old_binary_path.append(executable_name.data, executable_name.size);
-        old_binary_path.append(".old");
-        old_binary_path.append_null(false);
-        auto old_binary_path_view = old_binary_path.to_string_view(true);
+        StrBuilder old_binary_path_builder(get_global_allocator());
+        old_binary_path_builder.append(executable_name.data, executable_name.size);
+        old_binary_path_builder.append(".old");
+        old_binary_path_builder.append_null(false);
+        auto old_executable_name = old_binary_path_builder.to_string_view(true);
 
-        if (!rename_file(executable_name, old_binary_path_view)) {
+        if (!rename_file(executable_name, old_executable_name)) {
             exit(EXIT_FAILURE);
         }
 
@@ -2435,9 +2437,11 @@ namespace Sl
         cmd.add_run_argument("EZBUILD_REBUILT");
         bool run = true;
         if (!cmd.end_build(run)) {
-            rename_file(old_binary_path_view, executable_name);
+            rename_file(old_executable_name, executable_name);
             exit(EXIT_FAILURE);
         }
+        if (system != FlagsSystem::WINDOWS)
+            delete_file(old_executable_name);
         exit(EXIT_SUCCESS);
     }
 } // namespace Sl
