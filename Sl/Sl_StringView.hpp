@@ -25,6 +25,8 @@ namespace Sl
         StrView(const wchar_t* wstr);
         StrView chop_left(usize count) noexcept;
         StrView chop_right(usize count) noexcept;
+        StrView chop_left_by_delimeter(StrView delim) noexcept;
+        StrView chop_right_by_delimeter(StrView delim) noexcept;
         usize trim() noexcept;
         usize trim_left() noexcept;
         usize trim_right() noexcept;
@@ -34,17 +36,19 @@ namespace Sl
         bool starts_with(StrView prefix) const noexcept;
         bool ends_with(StrView suffix) const noexcept;
         bool contains(char ch) const noexcept;
+        bool contains(StrView word) const noexcept;
         bool split_by_char(LocalArray<StrView>& array_out, char character) const noexcept;
-        usize find_first_occurrence_char(char ch) const noexcept;
-        usize find_first_occurrence_char_until(char ch, char until) const noexcept;
-        usize find_last_occurrence_char(char ch) const noexcept;
-        usize find_last_occurrence_char_until(char ch, char until) const noexcept;
-        usize find_first_occurrence_word(StrView word) const noexcept;
-        usize find_last_occurrence_word(StrView word) const noexcept;
+        usize find_first_occurrence(char ch) const noexcept;
+        usize find_first_occurrence(StrView word) const noexcept;
+        usize find_first_occurrence_until(char ch, char until) const noexcept;
+        usize find_last_occurrence(char ch) const noexcept;
+        usize find_last_occurrence(StrView word) const noexcept;
+        usize find_last_occurrence_until(char ch, char until) const noexcept;
         usize find_first_of_chars(StrView chars) const noexcept;
         usize find_last_of_chars(StrView chars) const noexcept;
         s32 compare(StrView sv) const noexcept;
         usize at(usize index) const noexcept;
+        bool is_empty() const noexcept;
         bool contains_non_ascii_char() const noexcept;
         bool operator==(const StrView& right) const noexcept;
     };
@@ -84,7 +88,7 @@ namespace Sl
         return equals(right);
     }
 
-    usize StrView::find_first_occurrence_char(char ch) const noexcept
+    usize StrView::find_first_occurrence(char ch) const noexcept
     {
         for (usize i = 0; i < size; ++i) {
             if (data[i] == ch) return i;
@@ -92,7 +96,7 @@ namespace Sl
         return INVALID_INDEX;
     }
 
-    usize StrView::find_first_occurrence_char_until(char ch, char until) const noexcept
+    usize StrView::find_first_occurrence_until(char ch, char until) const noexcept
     {
         for (usize i = 0; i < size; ++i) {
             if (data[i] == ch) return i;
@@ -101,7 +105,7 @@ namespace Sl
         return INVALID_INDEX;
     }
 
-    usize StrView::find_last_occurrence_char(char ch) const noexcept
+    usize StrView::find_last_occurrence(char ch) const noexcept
     {
         usize index = INVALID_INDEX;
         for (usize i = 0; i < size; ++i) {
@@ -111,7 +115,7 @@ namespace Sl
         return index;
     }
 
-    usize StrView::find_last_occurrence_char_until(char ch, char until) const noexcept
+    usize StrView::find_last_occurrence_until(char ch, char until) const noexcept
     {
         usize index = INVALID_INDEX;
         for (usize i = 0; i < size; ++i) {
@@ -140,7 +144,7 @@ namespace Sl
     }
 
 
-    usize StrView::find_first_occurrence_word(StrView word) const noexcept
+    usize StrView::find_first_occurrence(StrView word) const noexcept
     {
         if (word.size == 0 || word.size > this->size)
             return INVALID_INDEX;
@@ -163,7 +167,7 @@ namespace Sl
         return INVALID_INDEX;
     }
 
-    usize StrView::find_last_occurrence_word(StrView word) const noexcept
+    usize StrView::find_last_occurrence(StrView word) const noexcept
     {
         if (word.size == 0 || word.size > this->size)
             return INVALID_INDEX;
@@ -232,7 +236,12 @@ namespace Sl
 
     bool StrView::contains(char ch) const noexcept
     {
-        return find_first_occurrence_char(ch) != INVALID_INDEX;
+        return find_first_occurrence(ch) != INVALID_INDEX;
+    }
+
+    bool StrView::contains(StrView word) const noexcept
+    {
+        return find_first_occurrence(word) != INVALID_INDEX;
     }
 
     usize StrView::trim_left_char(char ch) noexcept
@@ -311,6 +320,45 @@ namespace Sl
             size -= count;
         }
         return chopped;
+    }
+
+    StrView StrView::chop_left_by_delimeter(StrView delim) noexcept
+    {
+        ASSERT_TRUE(!delim.is_empty());
+
+        usize pos = find_first_occurrence(delim);
+        if (pos == INVALID_INDEX) {
+            StrView copy = *this;
+            memory_zero(this, sizeof(*this));
+            return copy;
+        }
+
+        StrView chopped{data, pos + delim.size, false, (bool)is_wide};
+        data += pos + delim.size;
+        size -= pos + delim.size;
+        return chopped;
+    }
+
+    StrView StrView::chop_right_by_delimeter(StrView delim) noexcept
+    {
+        ASSERT_TRUE(!delim.is_empty());
+
+        usize pos = find_last_occurrence(delim);
+        if (pos == INVALID_INDEX) {
+            StrView copy = *this;
+            memory_zero(this, sizeof(*this));
+            return copy;
+        }
+
+        StrView chopped{data + pos, size - pos, false, (bool)is_wide};
+        is_null_terminated = false;
+        size = pos;
+        return chopped;
+    }
+
+    bool StrView::is_empty() const noexcept
+    {
+        return size < 1;
     }
 
     bool StrView::contains_non_ascii_char() const noexcept

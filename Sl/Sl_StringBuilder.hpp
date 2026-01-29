@@ -29,17 +29,18 @@ namespace Sl
         Allocator* current_allocator() const noexcept;
         char* to_cstring_alloc(Allocator* allocator = nullptr) const noexcept;
         StrView to_string_view(bool is_null_terminated = false, bool is_wide = false) const noexcept;
-        StrBuilder& copy_from(const StrBuilder& other);
-        StrBuilder& operator<<(StrView str);
-        StrBuilder& operator<<(char val);
-        StrBuilder& operator<<(int val);
-        StrBuilder& operator<<(long val);
-        StrBuilder& operator<<(long long val);
-        StrBuilder& operator<<(unsigned val);
-        StrBuilder& operator<<(unsigned long val);
-        StrBuilder& operator<<(unsigned long long val);
-        StrBuilder& operator<<(double val);
-        bool operator==(const StrBuilder& other);
+        StrBuilder& copy_from(const StrBuilder& other) noexcept;
+        StrBuilder& operator<<(StrView str) noexcept; // Escapes str
+        StrBuilder& operator<<(const char* str) noexcept; // Escapes str
+        StrBuilder& operator<<(char val) noexcept;
+        StrBuilder& operator<<(int val) noexcept;
+        StrBuilder& operator<<(long val) noexcept;
+        StrBuilder& operator<<(long long val) noexcept;
+        StrBuilder& operator<<(unsigned val) noexcept;
+        StrBuilder& operator<<(unsigned long val) noexcept;
+        StrBuilder& operator<<(unsigned long long val) noexcept;
+        StrBuilder& operator<<(double val) noexcept;
+        bool operator==(const StrBuilder& other) noexcept;
     };
 } // namespace Sl
 #endif // !SL_STRINGBUILDER_H
@@ -172,73 +173,80 @@ namespace Sl
         return Sl::StrView(_data, _count * sizeof(char), is_null_terminated, is_wide);
     }
 
-    StrBuilder& StrBuilder::operator<<(StrView str)
+    StrBuilder& StrBuilder::operator<<(StrView str) noexcept
     {
-        append(str);
+        append_escaped(str);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(char val)
+
+    StrBuilder& StrBuilder::operator<<(const char* str) noexcept
+    {
+        append_escaped(str);
+        return *this;
+    }
+
+    StrBuilder& StrBuilder::operator<<(char val) noexcept
     {
         append(val);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(int val)
+    StrBuilder& StrBuilder::operator<<(int val) noexcept
     {
-        char buf[128];
+        char buf[64];
         sprintf(buf, "%d", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(long val)
+    StrBuilder& StrBuilder::operator<<(long val) noexcept
     {
-        char buf[128];
+        char buf[64];
         sprintf(buf, "%ld", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(long long val)
+    StrBuilder& StrBuilder::operator<<(long long val) noexcept
     {
-        char buf[128];
+        char buf[64];
         sprintf(buf, "%lld", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(unsigned val)
+    StrBuilder& StrBuilder::operator<<(unsigned val) noexcept
     {
-        char buf[128];
+        char buf[64];
         sprintf(buf, "%u", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(unsigned long val)
+    StrBuilder& StrBuilder::operator<<(unsigned long val) noexcept
     {
-        char buf[128];
+        char buf[64];
         sprintf(buf, "%lu", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(unsigned long long val)
+    StrBuilder& StrBuilder::operator<<(unsigned long long val) noexcept
     {
-        char buf[128];
+        char buf[64];
         sprintf(buf, "%llu", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::operator<<(double val)
+    StrBuilder& StrBuilder::operator<<(double val) noexcept
     {
         char buf[128];
         sprintf(buf, "%.17g", val);
         append(buf);
         return *this;
     }
-    StrBuilder& StrBuilder::copy_from(const StrBuilder& other)
+    StrBuilder& StrBuilder::copy_from(const StrBuilder& other) noexcept
     {
         resize(other._capacity);
         _count = other._count;
         memory_copy((void*)_data, _count, (void*)other._data, other._count);
         return *this;
     }
-    bool StrBuilder::operator==(const StrBuilder& other)
+    bool StrBuilder::operator==(const StrBuilder& other) noexcept
     {
         if (_count != other._count) return false;
         return memory_equals((void*)_data, _count, (void*)other._data, other._count);

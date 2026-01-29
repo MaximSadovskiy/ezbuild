@@ -35,7 +35,7 @@ namespace Sl
     // Deallocates global allocator. You don't need to call it before calling set_global_allocator(), it will be done for you
     void cleanup_global_allocator() noexcept;
     // Allocates some memory from the global allocator. 0 alignment equals no alignment
-    void* temp_allocate(usize size, u16 alignment = sizeof(void*)) noexcept;
+    void* temp_alloc(usize size, u16 alignment = sizeof(void*)) noexcept;
     // Make a "snapshot" of current state of the global allocator,
     //  in order to restore it later (basically deallocates used resources) by calling temp_end(snapshot);
     Snapshot* temp_begin() noexcept;
@@ -232,7 +232,7 @@ namespace Sl
         get_global_allocator()->cleanup();
     }
 
-    void* temp_allocate(usize size, u16 alignment) noexcept
+    void* temp_alloc(usize size, u16 alignment) noexcept
     {
         return get_global_allocator()->allocate(size, alignment);
     }
@@ -315,7 +315,8 @@ namespace Sl
     Snapshot* LinearAllocator::snapshot()
     {
         auto current_cursor = cursor;
-        auto* snapshot = (LinearSnapshot*) temp_allocate(sizeof(LinearSnapshot));
+        auto* snapshot = (LinearSnapshot*) temp_alloc(sizeof(LinearSnapshot));
+        ASSERT_NOT_NULL(snapshot);
         ::new (snapshot) LinearSnapshot; // Initilize RTTI for virtual methods
 
         snapshot->index = current_cursor;
@@ -365,7 +366,8 @@ namespace Sl
             allocate(0, 0);
 
         auto* current_ptr = this->current;
-        auto* snapshot = (StackSnapshot*) temp_allocate(sizeof(StackSnapshot));
+        auto* snapshot = (StackSnapshot*) temp_alloc(sizeof(StackSnapshot));
+        ASSERT_NOT_NULL(snapshot);
         ::new (snapshot) StackSnapshot; // Initilize RTTI for virtual methods
 
         if (current_ptr == nullptr) current_ptr = this->begin;
@@ -456,7 +458,8 @@ namespace Sl
     Snapshot* PoolAllocator::snapshot()
     {
         auto* current_chunk = this->pool;
-        auto* snapshot = (PoolSnapshot*) temp_allocate(sizeof(PoolSnapshot));
+        auto* snapshot = (PoolSnapshot*) temp_alloc(sizeof(PoolSnapshot));
+        ASSERT_NOT_NULL(snapshot);
         ::new (snapshot) PoolSnapshot; // Initilize RTTI for virtual methods
         if (current_chunk == nullptr) {
             if (this->root == nullptr) allocate(0, 0); // initilize memory
@@ -603,7 +606,8 @@ namespace Sl
         if (_regions.count() < 1) allocate(0, 0); // initilize regions if empty
 
         const auto current_index = _regions[_current_region_index].cursor;
-        ArenaSnapshot* snapshot = (ArenaSnapshot*) temp_allocate(sizeof(ArenaSnapshot), alignof(ArenaSnapshot));
+        ArenaSnapshot* snapshot = (ArenaSnapshot*) temp_alloc(sizeof(ArenaSnapshot), alignof(ArenaSnapshot));
+        ASSERT_NOT_NULL(snapshot);
         ::new (snapshot) ArenaSnapshot; // Initilize RTTI for virtual methods
         snapshot->region_index = _current_region_index;
         snapshot->index = current_index;

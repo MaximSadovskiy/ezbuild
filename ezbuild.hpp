@@ -245,15 +245,12 @@ namespace Sl
         // This will push escaped strings to internal buffer, ultimately creating a "command"
         template<typename... Args>
         void push(Args... args) {
-            const auto commands_size = sizeof...(args);
-            const char* commands[] = {args...};
-
-            for (size_t i = 0; i < commands_size; ++i) {
-                auto command = StrView(commands[i]);
-                command.trim();
-                append_escaped(command);
-                append(" ", 1);
-            }
+            auto process = [&](auto&& arg) {
+                *this << std::forward<decltype(arg)>(arg);
+                append(' ');
+            };
+            int expand_args[] = {0, (process(args), 0)...};
+            UNUSED(expand_args);
         }
         // Execute current command, which in return gives you a Process struct
         Process execute(CmdOptions opt = {});
@@ -305,6 +302,7 @@ namespace Sl
         void push_flag_warning(FlagsWarning warning, FlagsCompiler compiler);
         // Pushes std flag into internal buffer
         void push_flag_std(FlagsSTD std, bool is_cpp, FlagsCompiler compiler);
+        void link_common_win_libraries();
         void append_libraries();
         void append_libraries_paths();
         void append_defines();
@@ -1041,7 +1039,7 @@ namespace Sl
             full_path.append_null(false);
 
             struct stat st;
-            if (stat(full_path.data, &st) == 0) {
+            if (stat(full_path.data(), &st) == 0) {
                 FileType type = FileType::NORMAL;
                 if (S_ISDIR(st.st_mode)) {
                     type = FileType::DIRECTORY;
@@ -1051,7 +1049,7 @@ namespace Sl
                     type = FileType::OTHER;
                 }
 
-                auto file_name_ptr = full_path.data + folder_path.size + (folder_path.ends_with("/") ? 0 : 1);
+                auto file_name_ptr = full_path.data() + folder_path.size + (folder_path.ends_with("/") ? 0 : 1);
                 auto* file_name = memory_duplicate(*get_global_allocator(), file_name_ptr, name_len);
                 files_out.push(FileEntry(StrView{(const char*)file_name, name_len}, type));
             } else {
@@ -1102,27 +1100,27 @@ namespace Sl
             slash = "  -";
         do {
             file_view.trim();
-            const auto slash_index = file_view.find_first_occurrence_word(slash);
+            const auto slash_index = file_view.find_first_occurrence(slash);
             if (slash_index == StrView::INVALID_INDEX) break;
 
             file_view.chop_left(slash_index + slash.size - 1);
-            auto end_of_flag = file_view.find_first_occurrence_char_until(' ', '\n');
+            auto end_of_flag = file_view.find_first_occurrence_until(' ', '\n');
             if (end_of_flag == StrView::INVALID_INDEX) {
-                file_view.chop_left(file_view.find_first_occurrence_char('\n') + 1);
+                file_view.chop_left(file_view.find_first_occurrence('\n') + 1);
                 continue;
             }
             auto flag = file_view.chop_left(end_of_flag);
-            const auto equal_index = flag.find_first_occurrence_char('=');
+            const auto equal_index = flag.find_first_occurrence('=');
             if (equal_index != StrView::INVALID_INDEX)      flag.chop_right(flag.size - equal_index);
-            const auto coma_index = flag.find_first_occurrence_char(',');
+            const auto coma_index = flag.find_first_occurrence(',');
             if (coma_index != StrView::INVALID_INDEX)       flag.chop_right(flag.size - coma_index);
-            const auto left_index = flag.find_first_occurrence_char('<');
+            const auto left_index = flag.find_first_occurrence('<');
             if (left_index != StrView::INVALID_INDEX)       flag.chop_right(flag.size - left_index);
-            const auto colon_index = flag.find_first_occurrence_char(':');
+            const auto colon_index = flag.find_first_occurrence(':');
             if (colon_index != StrView::INVALID_INDEX)      flag.chop_right(flag.size - colon_index);
-            const auto bracket_index = flag.find_first_occurrence_char('[');
+            const auto bracket_index = flag.find_first_occurrence('[');
             if (bracket_index != StrView::INVALID_INDEX)    flag.chop_right(flag.size - bracket_index);
-            const auto sqbracket_index = flag.find_first_occurrence_char('{');
+            const auto sqbracket_index = flag.find_first_occurrence('{');
             if (sqbracket_index != StrView::INVALID_INDEX)  flag.chop_right(flag.size - sqbracket_index);
             flags.push(flag);
         } while(file_view.size > 0);
@@ -1180,11 +1178,11 @@ namespace Sl
         usize total_read = 0;
 
         while (read_size > 0) {
-            ssize_t bytes_read = read(file_handle, buffer.data + total_read, read_size);
+            ssize_t bytes_read = read(file_handle, buffer.data() + total_read, read_size);
             if (bytes_read < 0) {
                 while (read_size > 1) {
                     read_size /= 2;
-                    bytes_read = read(file_handle, buffer.data + total_read, read_size);
+                    bytes_read = read(file_handle, buffer.data() + total_read, read_size);
                     if (bytes_read >= 0) {
                         break;
                     }
@@ -1199,7 +1197,7 @@ namespace Sl
             total_read += (usize)bytes_read;
             read_size = file_size - total_read;
         }
-        buffer.count = total_read;
+        buffer.set_count(total_read);
     #endif // !_WIN32
 
         return true;
@@ -1405,18 +1403,18 @@ namespace Sl
                 }
             }
             usize size_out;
-            StrView data_view(data, count);
+            StrView data_view(_data, _count);
             Allocator* alloc = get_global_allocator();
             Array<const char*> arr = {alloc};
             do {
                 // @TODO i know this is shit, but it works
-                auto index = data_view.find_first_occurrence_char_until(' ', '"');
+                auto index = data_view.find_first_occurrence_until(' ', '"');
                 if (index == StrView::INVALID_INDEX) {
-                    auto quote_index = data_view.find_first_occurrence_char('"');
+                    auto quote_index = data_view.find_first_occurrence('"');
                     if (quote_index != StrView::INVALID_INDEX) {
                         usize cursor = quote_index + 1;
                         data_view.chop_left(cursor);
-                        index = data_view.find_first_occurrence_char('"');
+                        index = data_view.find_first_occurrence('"');
                         auto arg = data_view.chop_left(index);
                         data_view.chop_left(1); // skip "
                         arg.trim();
@@ -1435,7 +1433,7 @@ namespace Sl
             } while(data_view.size > 0);
             arr.push((const char*)nullptr);
 
-            if (execvp(arr[0], (char * const*) arr.data) < 0) {
+            if (execvp(arr[0], (char * const*) arr.data()) < 0) {
                 report_error("Could not exec child process for %s", arr[0]);
                 exit(EXIT_FAILURE);
             }
@@ -1635,6 +1633,13 @@ namespace Sl
         }
     }
 
+    void Cmd::link_common_win_libraries()
+    {
+        const char* libs[] = {"user32.lib", "kernel32.lib", "gdi32.lib", "winspool.lib", "comdlg32.lib", "advapi32.lib", "shell32.lib", "ole32.lib", "oleaut32.lib"};
+        for (auto& lib : libs)
+            link_library(lib);
+    }
+
     void Cmd::start_build(ExecutableOptions opt)
     {
         this->incremental_build = opt.incremental_build;
@@ -1660,7 +1665,7 @@ namespace Sl
 
     bool Cmd::include_sources_from_folder(StrView folder_path)
     {
-        Array<FileEntry> files;
+        Array<FileEntry> files(get_global_allocator());
         if (!read_folder(folder_path, files))
             return false;
 
@@ -1726,8 +1731,10 @@ namespace Sl
 
     void Cmd::append_libraries()
     {
+        const auto compiler = get_compiler();
         for (auto& lib : link_libraries) {
-            append("-l");
+            if (compiler != FlagsCompiler::MSVC)
+                append("-l");
             append(lib.data, lib.size);
             append(' ');
         }
@@ -1735,8 +1742,14 @@ namespace Sl
 
     void Cmd::append_libraries_paths()
     {
+        const auto compiler = get_compiler();
+        if (compiler == FlagsCompiler::MSVC)
+            append("/link ");
         for (auto& path : link_libraries_paths) {
-            append("-L");
+            if (compiler == FlagsCompiler::MSVC)
+                append("/LIBPATH:");
+            else
+                append("-L");
             append(path.data, path.size);
             append(' ');
         }
@@ -1772,6 +1785,7 @@ namespace Sl
             if (i + 1 < linker_flags.count())
                 append(",");
         }
+        append(' ');
     }
 
     void Cmd::output_folder(StrView folder)
@@ -1805,9 +1819,9 @@ namespace Sl
 
     bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder)
     {
-        auto cpp_index = depency_path.find_last_occurrence_word(".cpp");
+        auto cpp_index = depency_path.find_last_occurrence(".cpp");
         if (cpp_index == StrView::INVALID_INDEX) {
-            cpp_index = depency_path.find_last_occurrence_word(".c");
+            cpp_index = depency_path.find_last_occurrence(".c");
             if (cpp_index == StrView::INVALID_INDEX) return false;
         }
         depency_path.chop_right(depency_path.size - cpp_index);
@@ -1843,18 +1857,18 @@ namespace Sl
             start_dep_str = ":  ";
             end_dep_str = '\n';
             do {
-                auto start_dep = view.find_first_occurrence_word(start_dep_str);
+                auto start_dep = view.find_first_occurrence(start_dep_str);
                 if (start_dep == StrView::INVALID_INDEX)
                     break;
                 view.chop_left(start_dep + start_dep_str.size);
-                auto end_dep = view.find_first_occurrence_char(end_dep_str);
+                auto end_dep = view.find_first_occurrence(end_dep_str);
                 if (end_dep == StrView::INVALID_INDEX)
                     break;
                 auto depency_view = view.chop_left(end_dep);
                 depency_view.trim();
                 StrBuilder fixed_path_depency = {get_global_allocator()};
                 do {
-                    auto index = depency_view.find_first_occurrence_word("\\./");
+                    auto index = depency_view.find_first_occurrence("\\./");
                     if (index == StrView::INVALID_INDEX) {
                         if (fixed_path_depency.count() > 0)
                             fixed_path_depency.append(depency_view);
@@ -1875,7 +1889,7 @@ namespace Sl
         } else {
             start_dep_str = ": ";
             end_dep_str = ' ';
-            auto start_dep = view.find_first_occurrence_word(start_dep_str);
+            auto start_dep = view.find_first_occurrence(start_dep_str);
             if (start_dep == StrView::INVALID_INDEX)
                 return false;
             view.chop_left(start_dep + start_dep_str.size);
@@ -1883,7 +1897,7 @@ namespace Sl
             auto temp_size = 0;
             bool skip_first = true;
             do {
-                auto end_dep = temp_view.find_first_occurrence_char(end_dep_str);
+                auto end_dep = temp_view.find_first_occurrence(end_dep_str);
                 if (end_dep == StrView::INVALID_INDEX) {
                     view.trim();
                     view.trim_left_char('\\');
@@ -1966,7 +1980,7 @@ namespace Sl
         for (auto& dependency : deps) {
             escaped_dependency.clear();
             do {
-                auto index = dependency.find_first_occurrence_word("\\ ");
+                auto index = dependency.find_first_occurrence("\\ ");
                 if (index == StrView::INVALID_INDEX) {
                     escaped_dependency.append(dependency.chop_left(dependency.size));
                     escaped_dependency.append_null(false);
@@ -1988,9 +2002,9 @@ namespace Sl
 
     static StrView strip_cpp_postfix(StrView file)
     {
-        auto cpp_index = file.find_last_occurrence_word(".cpp");
+        auto cpp_index = file.find_last_occurrence(".cpp");
         if (cpp_index == StrView::INVALID_INDEX) {
-            cpp_index = file.find_last_occurrence_word(".c");
+            cpp_index = file.find_last_occurrence(".c");
         }
         if (cpp_index != StrView::INVALID_INDEX) {
             file.chop_right(file.size - cpp_index);
@@ -2029,6 +2043,7 @@ namespace Sl
         if (incremental_build) {
             ASSERT_TRUE(source_files.count() == source_files_output.count());
             create_folder(this->_output_folder);
+            append_custom_flags();
             append_defines();
             { // Check if executable file exist
                 // @TODO check if executable is newer than all source files, right now it just checks if it exist or not
@@ -2086,13 +2101,17 @@ namespace Sl
                     CmdOptions options = {};
                     options.reset_command = false;
                     options.stdout_desc = &dependency_file;
-                    if (compiler == FlagsCompiler::MSVC)
-                        append("/nologo /showIncludes ");
-                    else
-                        append("-M ");
+                    if (compiler == FlagsCompiler::MSVC) {
+                        // MSVC will generate obj file, even we asking it not to do that
+                        // so we will redirect it to trash (where it belongs).
+                        append("/c /showIncludes /Fo:");
+                        append(_output_folder);
+                        append("/.trash.obj ");
+                    } else
+                        append("-MM ");
                     append(file.data, file.size);
                     {
-                        ScopedLogger _(logger_muted);
+                        // ScopedLogger _(logger_muted);
                         if (!execute(options).wait()) return false;
                         close_file(dependency_file);
                     }
@@ -2133,8 +2152,6 @@ namespace Sl
             if (!procs.wait_all())
                 return false;
             if (needs_to_rebuilt) {
-                append_libraries_paths();
-                append_libraries();
                 append_custom_flags();
                 append_output_name(compiler);
                 for (auto& file : source_files) {
@@ -2145,6 +2162,8 @@ namespace Sl
                     append(' ');
                 }
                 append_linker_flags(compiler);
+                append_libraries_paths();
+                append_libraries();
                 log_info("Linking executable...\n");
                 result = execute().wait();
             } else {
@@ -2154,16 +2173,16 @@ namespace Sl
             }
         }
         else {
-            append_defines();
-            append_libraries_paths();
-            append_libraries();
             append_custom_flags();
+            append_defines();
             append_output_name(compiler);
             for (auto& file : source_files) {
                 append(file.data, file.size);
                 append(' ');
             }
             append_linker_flags(compiler);
+            append_libraries_paths();
+            append_libraries();
             log_info("Linking executable...\n");
             result = execute().wait();
         }

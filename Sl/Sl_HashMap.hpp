@@ -132,6 +132,12 @@ namespace Sl
                 if (!slot.occupied) return nullptr;
                 if (slot.key == key) return &slot.value;
             }
+            for (usize i = 0; i < index; ++i) { // Wrap
+                auto& slot = _table[i];
+
+                if (!slot.occupied) return nullptr;
+                if (slot.key == key) return &slot.value;
+            }
             return nullptr;
         }
 
@@ -140,6 +146,16 @@ namespace Sl
             const usize index = hash(key, _table.capacity);
 
             for (size_t i = index; i < _table.capacity; ++i) {
+                Entry& slot = _table[i];
+
+                if (!slot.occupied) return false;
+                if (slot.key == key) {
+                    slot.occupied = false;
+                    --_count;
+                    return true;
+                }
+            }
+            for (usize i = 0; i < index; ++i) { // Wrap
                 Entry& slot = _table[i];
 
                 if (!slot.occupied) return false;

@@ -8,9 +8,6 @@
 namespace Sl
 {
     struct Allocator;
-    struct StrView;
-    struct StrBuilder;
-
     void memory_set(void* src, u8 data, usize size) noexcept;
     void memory_zero(void* src, usize size) noexcept;
     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
@@ -28,6 +25,9 @@ namespace Sl
 #if defined(SL_IMPLEMENTATION)
 namespace Sl
 {
+    struct StrView;
+    struct StrBuilder;
+
     bool memory_equals(const void* ptr1, usize ptr1_size, const void* ptr2, usize ptr2_size) noexcept
     {
         return memory_compare(ptr1, ptr1_size, ptr2, ptr2_size) == 0;
