@@ -53,11 +53,6 @@ namespace Sl
             cleanup();
             _allocator = allocator;
         }
-        void set_count(usize count)
-        { // Use it, if you know what you are doing
-            ASSERT(count <= _capacity, "Count cannot be bigger than allocated capacity");
-            _count = count;
-        }
 
         T& get(usize index) noexcept
         {
@@ -191,6 +186,22 @@ namespace Sl
                 _capacity = needed_capacity;
                 _count = new_count;
             }
+        }
+
+        void set_data(T* data)
+        { // Use it, if you know what you are doing
+            _data = data;
+        }
+
+        void set_count(usize count)
+        { // Use it, if you know what you are doing
+            ASSERT(count <= _capacity, "Count cannot be bigger than allocated capacity");
+            _count = count;
+        }
+
+        void set_capacity(usize capacity)
+        { // Use it, if you know what you are doing
+            _capacity = capacity;
         }
 
         void memzero() noexcept

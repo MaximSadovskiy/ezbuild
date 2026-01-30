@@ -170,7 +170,7 @@ namespace Sl
     // Compares time of depency files with provided file. If true, that means file needs to be rebuilt. Useful for non C/C++ builds.
     Result file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
     // Must-have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
-    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "");
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "", HashMap<StrView, FileTimeUnit>* memoization = nullptr);
     // Checks if provided argument is supported for current compiler
     bool is_flag_supported_cpp(StrView expected_flag);
     // Returns all supported flags for current compiler
@@ -1954,8 +1954,14 @@ namespace Sl
         return true;
     }
 
-    static bool compare_file_time_with_provided(StrView file, FileTimeUnit provided, s32& result_out)
+    static bool compare_file_time_with_provided(StrView file, FileTimeUnit provided, s32& result_out, HashMap<StrView, FileTimeUnit>* cache = nullptr)
     {
+        if (cache) {
+            if (auto* time = cache->get(file)) {
+                result_out = compare_file_time(provided, *time);
+                return true;
+            }
+        }
         FileHandle file_handle;
         if (!open_file(file, file_handle)) return false;
         FileTime file_time;
@@ -1966,10 +1972,11 @@ namespace Sl
         FileTimeUnit src_time = file_time.last_write_time;
         close_file(file_handle);
         result_out = compare_file_time(provided, src_time);
+        if (cache) cache->insert(file, src_time);
         return true;
     }
 
-    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder)
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder, HashMap<StrView, FileTimeUnit>* memoization)
     {
         ASSERT(obj.data != nullptr && obj.size > 0, "Provide correct object file path");
         ASSERT(src_file.data != nullptr && src_file.size > 0, "Provide correct source file path");
@@ -2011,7 +2018,7 @@ namespace Sl
             } while(true);
             auto dependency_view = escaped_dependency.to_string_view(true);
             s32 compare;
-            if (!compare_file_time_with_provided(dependency_view, obj_time, compare))
+            if (!compare_file_time_with_provided(dependency_view, obj_time, compare, memoization))
                 return Result::SL_TRUE;
             if (compare < 0)
                 return Result::SL_TRUE;
@@ -2082,6 +2089,12 @@ namespace Sl
             Processes procs = {};
             const auto max_procs = max_concurent_procceses == 0 ? get_system_info().number_of_processors * 2 + 1 : max_concurent_procceses;
             StrBuilder output_file_object(get_global_allocator());
+
+            HashMapOptions opt{};
+            opt.allocator = get_global_allocator();
+            opt.hasher = StrView::hash;
+            HashMap<StrView, FileTimeUnit> memoization(opt);
+
             const auto mark = this->_count;
             for (auto& file : source_files) {
                 // Create dependency
@@ -2150,7 +2163,7 @@ namespace Sl
                 output_file_object.append(".obj");
                 output_file_object.append_null(false);
                 const auto output_file_object_path = output_file_object.to_string_view(true);
-                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder) != Result::SL_FALSE)
+                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder, &memoization) != Result::SL_FALSE)
                 {
                     if (compiler == FlagsCompiler::MSVC)
                         append("/c ");
@@ -2212,7 +2225,6 @@ namespace Sl
             result = execute().wait();
         }
         if (result && run) {
-            //@TODO add hashmap for memoization
             _count = 0;
             append_output_name(compiler, false);
             log_info("Running: " SB_FORMAT "\n", (int)_count, _data);

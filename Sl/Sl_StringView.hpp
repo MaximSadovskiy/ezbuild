@@ -51,6 +51,7 @@ namespace Sl
         bool is_empty() const noexcept;
         bool contains_non_ascii_char() const noexcept;
         bool operator==(const StrView& right) const noexcept;
+        static u64 hash(usize seed, const void* key, usize key_len);
     };
 } // namespace Sl
 #endif // !SL_STRINGVIEW_H
@@ -369,6 +370,15 @@ namespace Sl
         }
         return false;
     }
+
+    u64 StrView::hash(usize seed, const void* key, usize key_len)
+    {
+        ASSERT(sizeof(StrView) == key_len, "Probably passed wrong type");
+        const StrView* view = static_cast<const StrView*>(key);
+        u64 hasher_fn_default(usize seed, const void* key, usize key_len);
+        return hasher_fn_default(seed, view->data, view->size);
+    }
+
 } // namespace Sl
 
 #endif // !SL_IMPLEMENTATION
