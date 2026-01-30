@@ -143,9 +143,9 @@ namespace Sl
 
         bool remove(const K& key) noexcept
         {
-            const usize index = hash(key, _table.capacity);
+            const usize index = hash(key, _table.capacity());
 
-            for (size_t i = index; i < _table.capacity; ++i) {
+            for (size_t i = index; i < _table.capacity(); ++i) {
                 Entry& slot = _table[i];
 
                 if (!slot.occupied) return false;
@@ -215,7 +215,7 @@ namespace Sl
 
         void clear() noexcept
         {
-            for (usize i = _table.capacity; i > 0; --i) {
+            for (usize i = _table.capacity(); i > 0; --i) {
                 auto& slot = _table[i - 1];
                 if (slot.occupied) {
                     slot.occupied = false;
@@ -229,7 +229,7 @@ namespace Sl
         void cleanup() noexcept
         {
             clear();
-            _table.count = 0;
+            _table.set_count(0);
             _table.cleanup();
         }
     private:
