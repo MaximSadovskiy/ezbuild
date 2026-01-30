@@ -5,13 +5,13 @@
 // After that you can just run "./build" it will detect changes and rebuild itself (if needed)
 //
 #define EZBUILD_IMPLEMENTATION
-#include "ezbuild.hpp"
+#include "../../ezbuild.hpp"
 
 using namespace Sl;
 
 int main(int argc, char** argv)
 {
-    rebuild_itself(ExecutableOptions{}, argc, argv, "ezbuild.hpp");
+    rebuild_itself(ExecutableOptions{}, argc, argv, "../../ezbuild.hpp");
 
     log_warning("Hello %s (%s)\n", get_compiler_name(), get_system_name());
 

@@ -22,4 +22,4 @@
 *.txt
 *~
 
-!example/test_folder/*
+!examples/04-ReadFolder_example/test_folder/*

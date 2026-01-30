@@ -258,7 +258,7 @@ namespace Sl
         void print();
         // Trim current command
         void trim();
-        // Clear internal buffer and resources for C/C++ build
+        // Clear internal buffer and other resources (It does not cleanup itself)
         void clear();
 
     // This functions are responsible for С/C++ build
@@ -270,7 +270,7 @@ namespace Sl
     // Funtions down below can be called in between start_build() and end_build() in order to configure build steps
         // Set output file name to provided one
         void output_file(StrView file, bool contains_ext = false);
-        // Sets the folder, where all temporary files will be generated (optional)
+        // Sets the folder, where all temporary files will be generated (optional, by default ".build")
         void output_folder(StrView folder);
         // Add source file to build step
         void add_source_file(StrView file);
@@ -290,8 +290,8 @@ namespace Sl
         void add_linker_flag(StrView flag);
         // Add custom argument when running already built executable
         void add_run_argument(StrView arg);
-    // This function is used during build step, they are internal, not meant to use directly.
-    // But they can be usefull you need some sophisticated build step outside of this library.
+    // This functions is used during build step, they are internal, not meant to used directly.
+    // But they can be useful, if you need some sophisticated build step outside of provided ones.
         // Pushes output flag into internal buffer
         void push_flag_output(FlagsCompiler compiler, bool output_to_obj = false);
         // Pushes debug flag into internal buffer
@@ -321,7 +321,7 @@ namespace Sl
         Array<StrView> custom_arguments = {};
         Array<StrView> defines = {};
         StrView        output_name = {"a", 1, true, false};
-        StrView        _output_folder = {".ezbuild", 8, true, false};
+        StrView        _output_folder = {".build", 6, true, false};
         bool           output_contains_ext = false;
         bool           incremental_build = true;
         u32            max_concurent_procceses = 0;
@@ -1039,7 +1039,7 @@ namespace Sl
             full_path.append_null(false);
 
             struct stat st;
-            if (stat(full_path.data(), &st) == 0) {
+            if (lstat(full_path.data(), &st) == 0) {
                 FileType type = FileType::NORMAL;
                 if (S_ISDIR(st.st_mode)) {
                     type = FileType::DIRECTORY;
@@ -1074,6 +1074,7 @@ namespace Sl
         Cmd cmd = {};
         cmd.set_allocator(get_global_allocator());
         FileHandle output;
+        // @TODO put this temp file in output folder
         const char* flags_file = "flag.temp";
         if (!create_file(flags_file, output, false, FlagsFile::FILE_OPEN_READ_WRITE)) return false;
         const auto compiler = get_compiler();
@@ -1087,6 +1088,7 @@ namespace Sl
             cmd.push("cc", "--help");
         CmdOptions opt;
         opt.stdout_desc = &output;
+        opt.print_command = false;
         if (!cmd.execute(opt).wait()) return false;
 
         StrBuilder buffer(get_global_allocator());
@@ -1635,7 +1637,7 @@ namespace Sl
 
     void Cmd::link_common_win_libraries()
     {
-        const char* libs[] = {"user32.lib", "kernel32.lib", "gdi32.lib", "winspool.lib", "comdlg32.lib", "advapi32.lib", "shell32.lib", "ole32.lib", "oleaut32.lib"};
+        const char* libs[] = {"user32.lib", "kernel32.lib", "gdi32.lib", "advapi32.lib", "shell32.lib"};
         for (auto& lib : libs)
             link_library(lib);
     }
@@ -1665,6 +1667,7 @@ namespace Sl
 
     bool Cmd::include_sources_from_folder(StrView folder_path)
     {
+        // @TODO if doesnt end at '/' it cases compilation error
         Array<FileEntry> files(get_global_allocator());
         if (!read_folder(folder_path, files))
             return false;
@@ -1743,8 +1746,10 @@ namespace Sl
     void Cmd::append_libraries_paths()
     {
         const auto compiler = get_compiler();
-        if (compiler == FlagsCompiler::MSVC)
-            append("/link ");
+        if (compiler == FlagsCompiler::MSVC) {
+            if (link_libraries_paths.count() > 0 && linker_flags.count() < 1)
+                append("/link ");
+        }
         for (auto& path : link_libraries_paths) {
             if (compiler == FlagsCompiler::MSVC)
                 append("/LIBPATH:");
@@ -1775,17 +1780,22 @@ namespace Sl
     void Cmd::append_linker_flags(FlagsCompiler compiler)
     {
         if (compiler == FlagsCompiler::MSVC) {
-            if (linker_flags.count() > 0) append("/link");
+            if (linker_flags.count() > 0) append("/link ");
         } else {
             if (linker_flags.count() > 0) append("-Wl,");
         }
         for (usize i = 0; i < linker_flags.count(); ++i) {
             auto& flag = linker_flags[i];
             append(flag.data, flag.size);
-            if (i + 1 < linker_flags.count())
-                append(",");
+            if (i + 1 < linker_flags.count()) {
+                if (compiler == FlagsCompiler::MSVC)
+                    append(' ');
+                else
+                    append(',');
+
+            }
         }
-        append(' ');
+        if (linker_flags.count() > 0) append(' ');
     }
 
     void Cmd::output_folder(StrView folder)
@@ -2111,7 +2121,8 @@ namespace Sl
                         append("-MM ");
                     append(file.data, file.size);
                     {
-                        // ScopedLogger _(logger_muted);
+                        ScopedLogger _(logger_muted);
+                        // @TODO print if error
                         if (!execute(options).wait()) return false;
                         close_file(dependency_file);
                     }
@@ -2187,6 +2198,7 @@ namespace Sl
             result = execute().wait();
         }
         if (result && run) {
+            //@TODO add hashmap for memoization
             _count = 0;
             append_output_name(compiler, false);
             log_info("Running: " SB_FORMAT "\n", (int)_count, _data);
@@ -2218,7 +2230,7 @@ namespace Sl
         output_contains_ext = false;
         incremental_build = true;
         output_name = {"a", 1, true, false};
-        _output_folder = {".ezbuild", 8, true, false};
+        _output_folder = {".build", 6, true, false};
     }
 
     void Cmd::print()
