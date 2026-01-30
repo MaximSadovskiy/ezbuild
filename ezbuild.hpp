@@ -1027,15 +1027,16 @@ namespace Sl
                 break;
             }
 
-            const usize name_len = strlen(entry->d_name);
-            if (memory_equals(entry->d_name, name_len, ".", 1))  continue;
-            if (memory_equals(entry->d_name, name_len, "..", 2)) continue;
+            StrView entry_name = entry->d_name;
+            if (memory_equals(entry->d_name, entry_name.size, ".", 1))  continue;
+            if (memory_equals(entry->d_name, entry_name.size, "..", 2)) continue;
 
             // Construct full path for stat
             StrBuilder full_path = {};
             full_path.append(folder_path);
-            if (!folder_path.ends_with("/")) full_path.append("/");
-            full_path.append(entry->d_name);
+            if (!folder_path.ends_with("/") && !entry_name.starts_with("/"))
+                full_path.append("/");
+            full_path.append(entry_name);
             full_path.append_null(false);
 
             struct stat st;
@@ -1050,13 +1051,13 @@ namespace Sl
                 }
 
                 auto file_name_ptr = full_path.data() + folder_path.size + (folder_path.ends_with("/") ? 0 : 1);
-                auto* file_name = memory_duplicate(*get_global_allocator(), file_name_ptr, name_len);
-                files_out.push(FileEntry(StrView{(const char*)file_name, name_len}, type));
+                auto* file_name = memory_duplicate(*get_global_allocator(), file_name_ptr, entry_name.size);
+                files_out.push(FileEntry(StrView{(const char*)file_name, entry_name.size}, type));
             } else {
                 // Failed to stat, treat as normal file
                 StrView file_name = {
-                    (const char*)memory_duplicate(*get_global_allocator(), entry->d_name, name_len),
-                    name_len,
+                    (const char*)memory_duplicate(*get_global_allocator(), entry->d_name, entry_name.size),
+                    entry_name.size,
                     true,
                     false
                 };
@@ -1667,7 +1668,6 @@ namespace Sl
 
     bool Cmd::include_sources_from_folder(StrView folder_path)
     {
-        // @TODO if doesnt end at '/' it cases compilation error
         Array<FileEntry> files(get_global_allocator());
         if (!read_folder(folder_path, files))
             return false;
@@ -1677,6 +1677,8 @@ namespace Sl
             if (name.ends_with(".cpp") || name.ends_with(".c")) {
                 StrBuilder full_path(get_global_allocator());
                 full_path.append(folder_path);
+                if (!folder_path.ends_with("/") && !name.starts_with("/"))
+                    full_path.append('/');
                 full_path.append(name);
                 full_path.append_null(false);
                 add_source_file(full_path.to_string_view(true, name.is_wide || folder_path.is_wide));
@@ -2121,10 +2123,15 @@ namespace Sl
                         append("-MM ");
                     append(file.data, file.size);
                     {
-                        ScopedLogger _(logger_muted);
-                        // @TODO print if error
-                        if (!execute(options).wait()) return false;
+                        auto saved_logger = log_get_current();
+                        log_set_current(logger_muted);
+                        if (!execute(options).wait()) {
+                            log_set_current(saved_logger);
+                            log_error("Failed to get dependencies of \"" SV_FORMAT "\"", SV_ARG(file));
+                            return false;
+                        }
                         close_file(dependency_file);
+                        log_set_current(saved_logger);
                     }
                 }
                 this->_count = mark;
