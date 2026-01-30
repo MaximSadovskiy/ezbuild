@@ -1074,10 +1074,10 @@ namespace Sl
     {
         Cmd cmd = {};
         cmd.set_allocator(get_global_allocator());
+
+        StrView flag_path = "flag.temp";
         FileHandle output;
-        // @TODO put this temp file in output folder
-        const char* flags_file = "flag.temp";
-        if (!create_file(flags_file, output, false, FlagsFile::FILE_OPEN_READ_WRITE)) return false;
+        if (!create_file(flag_path, output, false, FlagsFile::FILE_OPEN_READ_WRITE)) return false;
         const auto compiler = get_compiler();
         if (compiler == FlagsCompiler::CLANG)
             cmd.push("clang++", "--help");
@@ -1090,11 +1090,17 @@ namespace Sl
         CmdOptions opt;
         opt.stdout_desc = &output;
         opt.print_command = false;
-        if (!cmd.execute(opt).wait()) return false;
+        if (!cmd.execute(opt).wait()) {
+            close_file(output);
+            return false;
+        }
+        close_file(output);
 
         StrBuilder buffer(get_global_allocator());
-        close_file(output);
-        if (!read_entire_file(flags_file, buffer)) return false;
+        if (!read_entire_file(flag_path, buffer)) {
+            delete_file(flag_path);
+            return false;
+        }
         auto file_view = buffer.to_string_view();
         StrView slash = "";
         if (compiler == FlagsCompiler::MSVC)
@@ -1127,6 +1133,7 @@ namespace Sl
             if (sqbracket_index != StrView::INVALID_INDEX)  flag.chop_right(flag.size - sqbracket_index);
             flags.push(flag);
         } while(file_view.size > 0);
+        delete_file(flag_path);
         return true;
     }
     bool is_flag_supported_cpp(StrView expected_flag)
