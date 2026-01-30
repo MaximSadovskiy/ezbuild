@@ -1,6 +1,7 @@
 #ifndef SL_STRINGVIEW_H
 #define SL_STRINGVIEW_H
 
+#define SV_LIT(str_lit) StrView(str_lit, sizeof(str_lit) - sizeof(str_lit[0]), true, false)
 #define SV_FORMAT "%.*s"
 #define SV_ARG(sv) (int)((sv).size), (sv).data
 
@@ -375,7 +376,6 @@ namespace Sl
     {
         ASSERT(sizeof(StrView) == key_len, "Probably passed wrong type");
         const StrView* view = static_cast<const StrView*>(key);
-        u64 hasher_fn_default(usize seed, const void* key, usize key_len);
         return hasher_fn_default(seed, view->data, view->size);
     }
 

@@ -2072,7 +2072,6 @@ namespace Sl
             append_custom_flags();
             append_defines();
             { // Check if executable file exist
-                // @TODO check if executable is newer than all source files, right now it just checks if it exist or not
                 StrBuilder output_full_name(get_global_allocator());
                 output_full_name.append(output_name.data, output_name.size);
                 #if defined(_WIN32)
