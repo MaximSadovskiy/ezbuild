@@ -3,7 +3,7 @@
 
 #define SL_ARRAY_CPP_COMPLIANT true
 #define SL_IMPLEMENTATION
-#include "Sl.h"
+#include "../Sl/Sl.hpp"
 #include <cstdint>
 #include <cstring>
 #include <string>

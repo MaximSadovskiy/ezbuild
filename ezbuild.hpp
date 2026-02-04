@@ -170,7 +170,7 @@ namespace Sl
     // Compares time of depency files with provided file. If true, that means file needs to be rebuilt. Useful for non C/C++ builds.
     Result file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
     // Must-have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
-    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "", HashMap<StrView, FileTimeUnit>* memoization = nullptr);
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "", HashMap<StrView, FileTimeUnit, StrView::hash>* memoization = nullptr);
     // Checks if provided argument is supported for current compiler
     bool is_flag_supported_cpp(StrView expected_flag);
     // Returns all supported flags for current compiler
@@ -1954,7 +1954,7 @@ namespace Sl
         return true;
     }
 
-    static bool compare_file_time_with_provided(StrView file, FileTimeUnit provided, s32& result_out, HashMap<StrView, FileTimeUnit>* cache = nullptr)
+    static bool compare_file_time_with_provided(StrView file, FileTimeUnit provided, s32& result_out, HashMap<StrView, FileTimeUnit, StrView::hash>* cache = nullptr)
     {
         if (cache) {
             if (auto* time = cache->get(file)) {
@@ -1976,7 +1976,7 @@ namespace Sl
         return true;
     }
 
-    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder, HashMap<StrView, FileTimeUnit>* memoization)
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder, HashMap<StrView, FileTimeUnit, StrView::hash>* memoization)
     {
         ASSERT(obj.data != nullptr && obj.size > 0, "Provide correct object file path");
         ASSERT(src_file.data != nullptr && src_file.size > 0, "Provide correct source file path");
@@ -2091,8 +2091,7 @@ namespace Sl
 
             HashMapOptions opt{};
             opt.allocator = get_global_allocator();
-            opt.hasher = StrView::hash;
-            HashMap<StrView, FileTimeUnit> memoization(opt);
+            HashMap<StrView, FileTimeUnit, StrView::hash> memoization(opt);
 
             const auto mark = this->_count;
             for (auto& file : source_files) {

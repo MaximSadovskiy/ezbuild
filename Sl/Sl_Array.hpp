@@ -204,6 +204,20 @@ namespace Sl
             _capacity = capacity;
         }
 
+        void reverse() noexcept
+        {
+            if (_count < 2) return;
+
+            usize left = 0;
+            usize right = _count - 1;
+
+            while (left < right) {
+                std::swap(_data[left], _data[right]);
+                ++left;
+                --right;
+            }
+        }
+
         void memzero() noexcept
         {
             if (_data) memory_zero(_data, _capacity * ALIGNMENT(sizeof(T), alignof(T)));
@@ -392,6 +406,20 @@ namespace Sl
             } else {
                 _data[index].~T();
                 --_count;
+            }
+        }
+
+        void reverse() noexcept
+        {
+            if (_count < 2) return;
+
+            usize left = 0;
+            usize right = _count - 1;
+
+            while (left < right) {
+                std::swap(_data[left], _data[right]);
+                ++left;
+                --right;
             }
         }
 

@@ -9,6 +9,9 @@ typedef u64(*Hasher_fn) (u64 seed, const void* key, usize key_len);
 
 namespace Sl
 {
+    // * Hasher function is required to just hash the raw bytes
+    // * Hash_fn in the template is optional function that will be called, when hashing is needed
+    //  it will give callback to hasher, so you can decide what members and how you want to hash you class
     u64 hasher_fn_default(usize seed, const void* key, usize key_len);
 
     struct HashMapOptions
@@ -23,7 +26,7 @@ namespace Sl
         Allocator* allocator = nullptr;
     };
 
-    template<typename K, typename V, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
+    template<typename K, typename V, u64(*Hash_fn)(usize seed, const K& key, Hasher_fn callback) = nullptr, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
     class HashMap {
         struct Entry {
             K key;
@@ -179,7 +182,11 @@ namespace Sl
 
         inline usize hash(const K& key, usize capacity) const noexcept
         {
-            return _hasher(_seed, &key, sizeof(key)) & (capacity - 1);
+            IF_CONSTEXPR(Hash_fn != nullptr) {
+                return Hash_fn(_seed, key, _hasher) & (capacity - 1);
+            } else {
+                return _hasher(_seed, &key, sizeof(key)) & (capacity - 1);
+            }
         }
 
         void grow() noexcept

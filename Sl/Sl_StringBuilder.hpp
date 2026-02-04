@@ -9,6 +9,8 @@
 
 namespace Sl
 {
+    typedef u64(*Hasher_fn) (u64 seed, const void* key, usize key_len);
+
     struct StrView;
     struct StrBuilder : Array<char, false>
     {
@@ -17,21 +19,21 @@ namespace Sl
             _allocator = allocator;
         }
 
-        void append(char ch) noexcept;
-        void append(const char* str, usize size) noexcept;
-        void append(StrView str) noexcept;
-        void append_escaped(StrView command, bool force_escape = false); // Usefull for paths
-        void append_null(bool update_count = true) noexcept;
-        bool appendf(const char* format, ...) noexcept SL_PRINTF_FORMATER(2, 3);
-        void reset() noexcept;
-        void align(u16 alignment) noexcept;
-        void cleanup() noexcept;
+        StrBuilder& append(char ch) noexcept;
+        StrBuilder& append(const char* str, usize size) noexcept;
+        StrBuilder& append(StrView str) noexcept;
+        StrBuilder& append_escaped(StrView command, bool force_escape = false); // Usefull for paths
+        StrBuilder& append_null(bool update_count = true) noexcept;
+        StrBuilder& appendf(const char* format, ...) noexcept SL_PRINTF_FORMATER(2, 3);
+        StrBuilder& align(u16 alignment) noexcept;
+        StrBuilder& reset() noexcept;
+        StrBuilder& cleanup() noexcept;
         Allocator* current_allocator() const noexcept;
         char* to_cstring_alloc(Allocator* allocator = nullptr) const noexcept;
         StrView to_string_view(bool is_null_terminated = false, bool is_wide = false) const noexcept;
         StrBuilder& copy_from(const StrBuilder& other) noexcept;
-        StrBuilder& operator<<(StrView str) noexcept; // Escapes str
-        StrBuilder& operator<<(const char* str) noexcept; // Escapes str
+        StrBuilder& operator<<(StrView str) noexcept; // calls append_escaped()
+        StrBuilder& operator<<(const char* str) noexcept; // calls append_escaped()
         StrBuilder& operator<<(char val) noexcept;
         StrBuilder& operator<<(int val) noexcept;
         StrBuilder& operator<<(long val) noexcept;
@@ -41,6 +43,7 @@ namespace Sl
         StrBuilder& operator<<(unsigned long long val) noexcept;
         StrBuilder& operator<<(double val) noexcept;
         bool operator==(const StrBuilder& other) noexcept;
+        static u64 hash(usize seed, const StrBuilder& key, Hasher_fn callback);
     };
 } // namespace Sl
 #endif // !SL_STRINGBUILDER_H
@@ -48,34 +51,38 @@ namespace Sl
 #if defined(SL_IMPLEMENTATION)
 namespace Sl
 {
-    void StrBuilder::append(const char* str, usize size) noexcept
+    StrBuilder& StrBuilder::append(const char* str, usize size) noexcept
     {
         if (size > 0 && str) {
             push_many(str, size);
         }
+        return *this;
     }
 
-    void StrBuilder::append(char ch) noexcept
+    StrBuilder& StrBuilder::append(char ch) noexcept
     {
         append(&ch, sizeof(ch));
+        return *this;
     }
 
-    void StrBuilder::append_null(bool update_count) noexcept
+    StrBuilder& StrBuilder::append_null(bool update_count) noexcept
     {
         append("\0", 1);
         if (!update_count) _count -= 1;
+        return *this;
     }
 
-    void StrBuilder::append(StrView str) noexcept
+    StrBuilder& StrBuilder::append(StrView str) noexcept
     {
         if (str.data) {
             append(str.data, str.size);
         }
+        return *this;
     }
 
-    void StrBuilder::append_escaped(StrView command, bool force_escape)
+    StrBuilder& StrBuilder::append_escaped(StrView command, bool force_escape)
     {
-        if (command.size == 0) return;
+        if (command.size == 0) return *this;
         if (!force_escape && command.find_first_of_chars(" \t\n\v\"") == StrView::INVALID_INDEX) {
             // no need to quote
             append(command.data, command.size);
@@ -101,31 +108,36 @@ namespace Sl
             }
             append('"');
         }
+        return *this;
     }
 
-    void StrBuilder::align(u16 alignment) noexcept
+    StrBuilder& StrBuilder::align(u16 alignment) noexcept
     {
         usize aligned_size = ALIGNMENT(_count, alignment) - _count;
         for (; aligned_size > 0; --aligned_size) {
             append_null();
         }
+        return *this;
     }
 
-    void StrBuilder::reset() noexcept
+    StrBuilder& StrBuilder::reset() noexcept
     {
         Array::clear();
+        return *this;
     }
 
-    void StrBuilder::cleanup() noexcept
+    StrBuilder& StrBuilder::cleanup() noexcept
     {
         Array::cleanup();
+        return *this;
     }
 
-    bool StrBuilder::appendf(const char* format, ...) noexcept
+    StrBuilder& StrBuilder::appendf(const char* format, ...) noexcept
     {
-        ASSERT_DEBUG(format);
-        if (!format) return false;
-        bool result = false;
+        if (!format) {
+            ASSERT_DEBUG(format);
+            return *this;
+        }
 
         va_list args;
         va_start(args, format);
@@ -134,18 +146,16 @@ namespace Sl
             if (size > 0) {
                 auto* str = (char*)_allocator->allocate(size);
                 append(str, static_cast<usize>(size));
-                result = true;
             }
         } else {
             char buf[4096];
             auto size = vsnprintf(buf, sizeof(buf), format, args);
             if (size > 0) {
                 append(buf, static_cast<usize>(size));
-                result = true;
             }
         }
         va_end(args);
-        return result;
+        return *this;
     }
 
     Allocator* StrBuilder::current_allocator() const noexcept
@@ -250,6 +260,11 @@ namespace Sl
     {
         if (_count != other._count) return false;
         return memory_equals((void*)_data, _count, (void*)other._data, other._count);
+    }
+    u64 StrBuilder::hash(usize seed, const StrBuilder& key, Hasher_fn callback)
+    {
+        ASSERT(callback, "Hasher function could not be null");
+        return callback(seed, key.data(), key.count());
     }
 } // namespace Sl
 #endif // !SL_IMPLEMENTATION
