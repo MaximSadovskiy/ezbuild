@@ -43,7 +43,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     // Find methods
     sv.find_first_occurrence_char_until(data[0], ' ');
     sv.find_first_occurrence_char(data[0]);
-    sv.find_last_occurrence_char(data[0]);
+    sv.find_last_char(data[0]);
     sv.find_first_of_chars(sv);
 
     // Split (needs Array - mock minimal version)

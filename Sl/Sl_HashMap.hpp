@@ -26,15 +26,24 @@ namespace Sl
         Allocator* allocator = nullptr;
     };
 
+
     template<typename K, typename V, u64(*Hash_fn)(usize seed, const K& key, Hasher_fn callback) = nullptr, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
     class HashMap {
+        struct Info {
+            u64 hash;
+            usize index;
+        };
         struct Entry {
             K key;
             V value;
-            bool occupied;
+            u64 hash;
 
-            Entry(K&& k, V&& v) : key(std::move(k)), value(std::move(v)), occupied(true) {}
+            Entry(K&& k, V&& v) : key(std::move(k)), value(std::move(v)), hash(FREE_HASH) {}
         };
+    public:
+        static const u64 FREE_HASH        = 0;
+        static const u64 DEAD_HASH        = 1;
+        static const u64 FIRST_VALID_HASH = 2;
     public:
         Array<Entry, cpp_compliant_and_slow> _table;
         size_t _count;
@@ -55,7 +64,7 @@ namespace Sl
             const auto new_capacity = is_power_of_two(opt.initial_size) ? opt.initial_size : next_power_of_two(opt.initial_size);
             _table.reserve(new_capacity);
             _table.set_count(new_capacity);
-            for (auto& slot : _table) slot.occupied = false;
+            for (auto& slot : _table) slot.hash = FREE_HASH;
         }
 
         bool is_empty() const noexcept { return _count == 0; }
@@ -67,25 +76,19 @@ namespace Sl
         {
             if (++_count > _table.capacity() * _max_load) grow();
 
-            const usize index = hash(key, _table.capacity());
-            for (usize i = index; i < _table.capacity(); ++i) {
-                auto& slot = _table[i];
-                if (!slot.occupied) {
-                    ::new (&slot.value) V(std::forward<Args>(args)...);
-                    slot.key = key;
-                    slot.occupied = true;
-                    return;
-                }
-            }
-            // Wrap if not found
-            for (usize i = 0; i < index; ++i) {
-                auto& slot = _table[i];
-                if (!slot.occupied) {
-                    ::new (&slot.value) V(std::forward<Args>(args)...);
-                    slot.key = key;
-                    slot.occupied = true;
-                    return;
-                }
+            auto capacity = _table.capacity();
+            auto _hash = hash(key);
+            auto _index = _hash & (capacity - 1);
+
+            for (usize i = 0; i < capacity; ++i) {
+               usize probe = (_index + i) % capacity;
+               auto& slot = _table[probe];
+               if (slot.hash < FIRST_VALID_HASH) {
+                   ::new (&slot.value) V(std::forward<Args>(args)...);
+                   slot.key = key;
+                   slot.hash = _hash;
+                   return;
+               }
             }
             grow();
             insert(std::move(key), std::forward<Args>(args)...);
@@ -95,24 +98,17 @@ namespace Sl
         void insert(K& key, Args&&... args) noexcept
         {
             if (++_count > _table.capacity() * _max_load) grow();
+            auto capacity = _table.capacity();
+            auto _hash = hash(key);
+            auto _index = _hash & (capacity - 1);
 
-            const usize index = hash(key, _table.capacity());
-            for (usize i = index; i < _table.capacity(); ++i) {
-                auto& slot = _table[i];
-                if (!slot.occupied) {
+            for (usize i = 0; i < capacity; ++i) {
+                usize probe = (_index + i) % capacity;
+                auto& slot = _table[probe];
+                if (slot.hash < FIRST_VALID_HASH) {
                     ::new (&slot.value) V(std::forward<Args>(args)...);
                     slot.key = key;
-                    slot.occupied = true;
-                    return;
-                }
-            }
-            // Wrap if not found
-            for (usize i = 0; i < index; ++i) {
-                auto& slot = _table[i];
-                if (!slot.occupied) {
-                    ::new (&slot.value) V(std::forward<Args>(args)...);
-                    slot.key = key;
-                    slot.occupied = true;
+                    slot.hash = _hash;
                     return;
                 }
             }
@@ -127,44 +123,38 @@ namespace Sl
 
         V* get(const K& key) const noexcept
         {
-            const usize index = hash(key, _table.capacity());
+            auto capacity = _table.capacity();
+            auto _hash = hash(key);
+            auto _index = _hash & (capacity - 1);
 
-            for (usize i = index; i < _table.count(); ++i) {
-                auto& slot = _table[i];
+            for (usize i = 0; i < capacity; ++i) {
+                usize probe = (_index + i) % capacity;
+                auto& slot = _table[probe];
+                if (slot.hash == FREE_HASH) return nullptr;
 
-                if (!slot.occupied) return nullptr;
-                if (slot.key == key) return &slot.value;
-            }
-            for (usize i = 0; i < index; ++i) { // Wrap
-                auto& slot = _table[i];
-
-                if (!slot.occupied) return nullptr;
-                if (slot.key == key) return &slot.value;
+                if (slot.hash == _hash && slot.key == key)
+                    return &slot.value;
             }
             return nullptr;
         }
 
         bool remove(const K& key) noexcept
         {
-            const usize index = hash(key, _table.capacity());
+            auto capacity = _table.capacity();
+            auto _hash = hash(key);
+            auto _index = _hash & (capacity - 1);
 
-            for (size_t i = index; i < _table.capacity(); ++i) {
-                Entry& slot = _table[i];
+            for (size_t i = 0; i < capacity; ++i) {
+                usize probe = (_index + i) % capacity;
+                Entry& slot = _table[probe];
 
-                if (!slot.occupied) return false;
-                if (slot.key == key) {
-                    slot.occupied = false;
+                if (slot.hash == FREE_HASH) return false;
+                if (slot.hash == _hash && slot.key == key) {
+                    slot.hash = DEAD_HASH;
                     --_count;
-                    return true;
-                }
-            }
-            for (usize i = 0; i < index; ++i) { // Wrap
-                Entry& slot = _table[i];
-
-                if (!slot.occupied) return false;
-                if (slot.key == key) {
-                    slot.occupied = false;
-                    --_count;
+                    IF_CONSTEXPR (cpp_compliant_and_slow) {
+                        slot.value.~V();
+                    }
                     return true;
                 }
             }
@@ -176,17 +166,20 @@ namespace Sl
             for (size_t i = 0; i < _table.capacity(); ++i) {
                 Entry& slot = _table[i];
 
-                if (slot.occupied) func(slot.key, slot.value);
+                if (slot.hash >= FIRST_VALID_HASH) func(slot.key, slot.value);
             }
         }
 
-        inline usize hash(const K& key, usize capacity) const noexcept
+        inline u64 hash(const K& key) const noexcept
         {
+            u64 res = 0;
             IF_CONSTEXPR(Hash_fn != nullptr) {
-                return Hash_fn(_seed, key, _hasher) & (capacity - 1);
+                res = Hash_fn(_seed, key, _hasher);
             } else {
-                return _hasher(_seed, &key, sizeof(key)) & (capacity - 1);
+                res = _hasher(_seed, &key, sizeof(key));
             }
+            if (res < FIRST_VALID_HASH) res += FIRST_VALID_HASH;
+            return res;
         }
 
         void grow() noexcept
@@ -199,19 +192,19 @@ namespace Sl
         restart:
             new_table.reserve(new_capacity);
             new_table.set_count(new_capacity);
-            for (auto& slot : new_table) slot.occupied = false;
+            for (auto& slot : new_table) slot.hash = FREE_HASH;
 
             _count = 0;
             for (usize i = 0; i < _table.capacity(); ++i) {
                 auto& slot = _table[i];
-                if (slot.occupied) {
+                if (slot.hash >= FIRST_VALID_HASH) {
                     if (!insert_inner(new_table, std::move(slot.key), std::move(slot.value)))
                     {
                         new_table.set_count(0);
                         new_capacity = next_power_of_two(new_capacity * _grow_factor);
                         goto restart;
                     }
-                    ++_count;
+                    // ++_count;
                 }
             }
             _table.cleanup();
@@ -224,8 +217,8 @@ namespace Sl
         {
             for (usize i = _table.capacity(); i > 0; --i) {
                 auto& slot = _table[i - 1];
-                if (slot.occupied) {
-                    slot.occupied = false;
+                if (slot.hash >= FIRST_VALID_HASH) {
+                    slot.hash = FREE_HASH;
                     IF_CONSTEXPR (cpp_compliant_and_slow) {
                         slot.value.~V();
                     }
@@ -262,24 +255,17 @@ namespace Sl
             ++_count;
             ASSERT_TRUE(_count < table.capacity());
 
-            const usize index = hash(key, table.capacity());
-            for (usize i = index; i < table.capacity(); ++i) {
-                Entry& slot = table[i];
+            auto capacity = table.capacity();
+            auto _hash = hash(key);
+            auto _index = _hash & (capacity - 1);
+            for (usize i = 0; i < capacity; ++i) {
+                usize probe = (_index + i) % capacity;
+                auto& slot = table[probe];
 
-                if (!slot.occupied) {
+                if (slot.hash < FIRST_VALID_HASH) {
                     slot.key = std::move(key);
                     slot.value = std::move(value);
-                    slot.occupied = true;
-                    return true;
-                }
-            }
-            for (usize i = 0; i < index; ++i) {
-                Entry& slot = table[i];
-
-                if (!slot.occupied) {
-                    slot.key = std::move(key);
-                    slot.value = std::move(value);
-                    slot.occupied = true;
+                    slot.hash = _hash;
                     return true;
                 }
             }

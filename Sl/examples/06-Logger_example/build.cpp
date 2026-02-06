@@ -1,5 +1,5 @@
-#define EZBUILD_IMPLEMENTATION
-#include "../../ezbuild.hpp"
+#define SL_IMPLEMENTATION
+#include "../../Sl.hpp"
 
 using namespace Sl;
 
@@ -12,13 +12,12 @@ void custom(LogLevel level, const char* const format, va_list args)
 
     printf("---------------\n");
     printf("{CustomLog} ");
-    vprintf(format, args);
+      vprintf(format, args);
     printf("---------------\n");
 }
 
 int main(int argc, char **argv)
 {
-    rebuild_itself(ExecutableOptions{}, argc, argv, "../../ezbuild.hpp");
     {
         // You can set your custom logger:
         log_set_current(custom);

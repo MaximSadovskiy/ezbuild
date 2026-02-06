@@ -40,10 +40,7 @@ namespace Sl
 
         if (ptr1_size != ptr2_size) return ((ptrdiff_t) ptr1_size - (ptrdiff_t)ptr2_size);
 
-        for (usize i = 0; i < ptr1_size; ++i)
-            if (((char*)ptr1)[i] != ((char*)ptr2)[i])
-                return -1;
-        return 0;
+        return memcmp(ptr1, ptr2, ptr2_size);
     }
 
     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept
@@ -53,9 +50,7 @@ namespace Sl
         if (src == nullptr || dest == nullptr) return;
 
         const usize copy_size = MIN(dest_size, src_size);
-
-        for (usize i = 0; i < copy_size; ++i)
-            ((char*)dest)[i] = ((char*)src)[i];
+        memcpy(dest, src, copy_size);
     }
 
     void memory_zero(void* src, usize size) noexcept

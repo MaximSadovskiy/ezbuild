@@ -7,6 +7,7 @@
 namespace Sl
 {
     struct Allocator;
+    void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
 
     template <typename T, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
     struct Array
@@ -100,6 +101,7 @@ namespace Sl
         T& first() noexcept { return get(0); }
         T& last() noexcept { return get(_count - 1); }
         bool is_empty() noexcept { return _count < 1; }
+        bool is_valid_index(usize index) const noexcept { return index < _capacity; }
 
         usize find_first(T val) const
         {
@@ -117,6 +119,8 @@ namespace Sl
             return index;
         }
 
+        template<typename... Args>
+        Array& operator<<(Args&&... args) noexcept { push(std::forward<Args>(args)...); return *this; }
         bool contains(T val) const { return find_first(val) != INVALID_INDEX; }
         T& operator[](usize index) noexcept { return get(index); }
         T* begin() noexcept { return _data; }
@@ -178,7 +182,6 @@ namespace Sl
                    for (usize i = new_count; i < _count; ++i)
                        _data[i].~T();
                 } else {
-                    void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
                     memory_copy((void*)new_data, needed_capacity_bytes, (const void*)_data, needed_capacity_bytes);
                 }
                 if (!_allocator) SL_ARRAY_FREE(_data);
@@ -368,6 +371,7 @@ namespace Sl
         }
         T& operator[](usize index) noexcept { return get(index); }
 
+        bool is_valid_index(usize index) const noexcept { return index < _allocated_capacity; }
         bool is_empty() noexcept { return _count < 1; }
         T& first() noexcept { return get(0); }
         T& last() noexcept { return get(_count - 1); }

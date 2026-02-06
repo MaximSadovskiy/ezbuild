@@ -1109,27 +1109,27 @@ namespace Sl
             slash = "  -";
         do {
             file_view.trim();
-            const auto slash_index = file_view.find_first_occurrence(slash);
+            const auto slash_index = file_view.find_first(slash);
             if (slash_index == StrView::INVALID_INDEX) break;
 
             file_view.chop_left(slash_index + slash.size - 1);
-            auto end_of_flag = file_view.find_first_occurrence_until(' ', '\n');
+            auto end_of_flag = file_view.find_first_until(' ', '\n');
             if (end_of_flag == StrView::INVALID_INDEX) {
-                file_view.chop_left(file_view.find_first_occurrence('\n') + 1);
+                file_view.chop_left(file_view.find_first('\n') + 1);
                 continue;
             }
             auto flag = file_view.chop_left(end_of_flag);
-            const auto equal_index = flag.find_first_occurrence('=');
+            const auto equal_index = flag.find_first('=');
             if (equal_index != StrView::INVALID_INDEX)      flag.chop_right(flag.size - equal_index);
-            const auto coma_index = flag.find_first_occurrence(',');
+            const auto coma_index = flag.find_first(',');
             if (coma_index != StrView::INVALID_INDEX)       flag.chop_right(flag.size - coma_index);
-            const auto left_index = flag.find_first_occurrence('<');
+            const auto left_index = flag.find_first('<');
             if (left_index != StrView::INVALID_INDEX)       flag.chop_right(flag.size - left_index);
-            const auto colon_index = flag.find_first_occurrence(':');
+            const auto colon_index = flag.find_first(':');
             if (colon_index != StrView::INVALID_INDEX)      flag.chop_right(flag.size - colon_index);
-            const auto bracket_index = flag.find_first_occurrence('[');
+            const auto bracket_index = flag.find_first('[');
             if (bracket_index != StrView::INVALID_INDEX)    flag.chop_right(flag.size - bracket_index);
-            const auto sqbracket_index = flag.find_first_occurrence('{');
+            const auto sqbracket_index = flag.find_first('{');
             if (sqbracket_index != StrView::INVALID_INDEX)  flag.chop_right(flag.size - sqbracket_index);
             flags.push(flag);
         } while(file_view.size > 0);
@@ -1418,13 +1418,13 @@ namespace Sl
             Array<const char*> arr = {alloc};
             do {
                 // @TODO i know this is shit, but it works
-                auto index = data_view.find_first_occurrence_until(' ', '"');
+                auto index = data_view.find_first_until(' ', '"');
                 if (index == StrView::INVALID_INDEX) {
-                    auto quote_index = data_view.find_first_occurrence('"');
+                    auto quote_index = data_view.find_first('"');
                     if (quote_index != StrView::INVALID_INDEX) {
                         usize cursor = quote_index + 1;
                         data_view.chop_left(cursor);
-                        index = data_view.find_first_occurrence('"');
+                        index = data_view.find_first('"');
                         auto arg = data_view.chop_left(index);
                         data_view.chop_left(1); // skip "
                         arg.trim();
@@ -1838,9 +1838,9 @@ namespace Sl
 
     bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder)
     {
-        auto cpp_index = depency_path.find_last_occurrence(".cpp");
+        auto cpp_index = depency_path.find_last(".cpp");
         if (cpp_index == StrView::INVALID_INDEX) {
-            cpp_index = depency_path.find_last_occurrence(".c");
+            cpp_index = depency_path.find_last(".c");
             if (cpp_index == StrView::INVALID_INDEX) return false;
         }
         depency_path.chop_right(depency_path.size - cpp_index);
@@ -1876,18 +1876,18 @@ namespace Sl
             start_dep_str = ":  ";
             end_dep_str = '\n';
             do {
-                auto start_dep = view.find_first_occurrence(start_dep_str);
+                auto start_dep = view.find_first(start_dep_str);
                 if (start_dep == StrView::INVALID_INDEX)
                     break;
                 view.chop_left(start_dep + start_dep_str.size);
-                auto end_dep = view.find_first_occurrence(end_dep_str);
+                auto end_dep = view.find_first(end_dep_str);
                 if (end_dep == StrView::INVALID_INDEX)
                     break;
                 auto depency_view = view.chop_left(end_dep);
                 depency_view.trim();
                 StrBuilder fixed_path_depency = {get_global_allocator()};
                 do {
-                    auto index = depency_view.find_first_occurrence("\\./");
+                    auto index = depency_view.find_first("\\./");
                     if (index == StrView::INVALID_INDEX) {
                         if (fixed_path_depency.count() > 0)
                             fixed_path_depency.append(depency_view);
@@ -1908,7 +1908,7 @@ namespace Sl
         } else {
             start_dep_str = ": ";
             end_dep_str = ' ';
-            auto start_dep = view.find_first_occurrence(start_dep_str);
+            auto start_dep = view.find_first(start_dep_str);
             if (start_dep == StrView::INVALID_INDEX)
                 return false;
             view.chop_left(start_dep + start_dep_str.size);
@@ -1916,7 +1916,7 @@ namespace Sl
             auto temp_size = 0;
             bool skip_first = true;
             do {
-                auto end_dep = temp_view.find_first_occurrence(end_dep_str);
+                auto end_dep = temp_view.find_first(end_dep_str);
                 if (end_dep == StrView::INVALID_INDEX) {
                     view.trim();
                     view.trim_left_char('\\');
@@ -2006,7 +2006,7 @@ namespace Sl
         for (auto& dependency : deps) {
             escaped_dependency.clear();
             do {
-                auto index = dependency.find_first_occurrence("\\ ");
+                auto index = dependency.find_first("\\ ");
                 if (index == StrView::INVALID_INDEX) {
                     escaped_dependency.append(dependency.chop_left(dependency.size));
                     escaped_dependency.append_null(false);
@@ -2028,9 +2028,9 @@ namespace Sl
 
     static StrView strip_cpp_postfix(StrView file)
     {
-        auto cpp_index = file.find_last_occurrence(".cpp");
+        auto cpp_index = file.find_last(".cpp");
         if (cpp_index == StrView::INVALID_INDEX) {
-            cpp_index = file.find_last_occurrence(".c");
+            cpp_index = file.find_last(".c");
         }
         if (cpp_index != StrView::INVALID_INDEX) {
             file.chop_right(file.size - cpp_index);
