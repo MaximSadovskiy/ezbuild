@@ -5,7 +5,8 @@
 #include "Sl_Array.hpp"
 
 //// 0 = Not equals, 1.. = Equals
-typedef u64(*Hasher_fn) (u64 seed, const void* key, usize key_len);
+
+typedef Sl::u64(*Hasher_fn) (Sl::u64 seed, const void* key, Sl::usize key_len);
 
 namespace Sl
 {

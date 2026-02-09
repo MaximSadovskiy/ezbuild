@@ -8,10 +8,10 @@
 #include "Sl_Defines.hpp"
 #include "Sl_Array.hpp"
 
+typedef Sl::u64(*Hasher_fn) (Sl::u64 seed, const void* key, Sl::usize key_len);
+
 namespace Sl
 {
-    typedef u64(*Hasher_fn) (u64 seed, const void* key, usize key_len);
-
     struct StrView
     {
         const char* data;
