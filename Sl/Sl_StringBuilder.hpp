@@ -12,7 +12,7 @@ typedef Sl::u64(*Hasher_fn) (Sl::u64 seed, const void* key, Sl::usize key_len);
 namespace Sl
 {
     struct StrView;
-    struct StrBuilder : Array<char, false>
+    struct StrBuilder : Array<char>
     {
         StrBuilder(Allocator* allocator = nullptr)
         {

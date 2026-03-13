@@ -97,7 +97,7 @@ namespace Sl
     struct ArenaAllocator : Allocator
     {
     private:
-        Array<ArenaRegion, false> _regions;
+        Array<ArenaRegion> _regions;
         usize _current_region_index;
         usize _region_size;
     public:
@@ -107,7 +107,7 @@ namespace Sl
             _current_region_index = 0;
         }
 
-        inline Array<ArenaRegion, false>& regions() { return _regions; }
+        inline Array<ArenaRegion>& regions() { return _regions; }
         inline usize current_region_index() { return _current_region_index; }
         inline usize region_size() { return _region_size; }
 
@@ -301,10 +301,7 @@ namespace Sl
     void LinearAllocator::rewind(Snapshot* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        LinearSnapshot* snapshot = nullptr;
-        try {
-            snapshot = dynamic_cast<LinearSnapshot*>(_snapshot);
-        } catch(...) {}
+        LinearSnapshot* snapshot = dynamic_cast<LinearSnapshot*>(_snapshot);
         if (snapshot == nullptr) {
             ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
             return;
@@ -378,10 +375,7 @@ namespace Sl
     void StackAllocator::rewind(Snapshot* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        StackSnapshot* snapshot = nullptr;
-        try {
-            snapshot = dynamic_cast<StackSnapshot*>(_snapshot);
-        } catch(...) {}
+        StackSnapshot* snapshot = dynamic_cast<StackSnapshot*>(_snapshot);
         if (snapshot == nullptr) {
             ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
             return;
@@ -474,10 +468,7 @@ namespace Sl
     {
         if (_snapshot == nullptr) return;
 
-        PoolSnapshot* snapshot = nullptr;
-        try {
-            snapshot = dynamic_cast<PoolSnapshot*>(_snapshot);
-        } catch(...) {}
+        PoolSnapshot* snapshot = dynamic_cast<PoolSnapshot*>(_snapshot);
         if (snapshot == nullptr) {
             ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
             return;
@@ -583,10 +574,7 @@ namespace Sl
     void ArenaAllocator::rewind(Snapshot* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        ArenaSnapshot* snapshot = nullptr;
-        try {
-            snapshot = dynamic_cast<ArenaSnapshot*>(_snapshot);
-        } catch(...) {}
+        ArenaSnapshot* snapshot = dynamic_cast<ArenaSnapshot*>(_snapshot);
         if (snapshot == nullptr) {
             ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
             return;

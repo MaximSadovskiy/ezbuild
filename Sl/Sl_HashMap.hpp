@@ -28,7 +28,7 @@ namespace Sl
     };
 
 
-    template<typename K, typename V, u64(*Hash_fn)(usize seed, const K& key, Hasher_fn callback) = nullptr, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
+    template<typename K, typename V, u64(*Hash_fn)(usize seed, const K& key, Hasher_fn callback) = nullptr>
     class HashMap {
         struct Info {
             u64 hash;
@@ -46,7 +46,7 @@ namespace Sl
         static const u64 DEAD_HASH        = 1;
         static const u64 FIRST_VALID_HASH = 2;
     public:
-        Array<Entry, cpp_compliant_and_slow> _table;
+        Array<Entry> _table;
         size_t _count;
         Hasher_fn _hasher;
         usize _seed;
@@ -122,7 +122,7 @@ namespace Sl
             return get(key);
         }
 
-        V* get(const K& key) const noexcept
+        V* get(const K& key) noexcept
         {
             auto capacity = _table.capacity();
             auto _hash = hash(key);
@@ -153,9 +153,7 @@ namespace Sl
                 if (slot.hash == _hash && slot.key == key) {
                     slot.hash = DEAD_HASH;
                     --_count;
-                    IF_CONSTEXPR (cpp_compliant_and_slow) {
-                        slot.value.~V();
-                    }
+                    slot.value.~V();
                     return true;
                 }
             }
@@ -189,7 +187,7 @@ namespace Sl
             if (!is_power_of_two(new_capacity)) {
                 new_capacity = next_power_of_two(new_capacity);
             }
-            Array<Entry, cpp_compliant_and_slow> new_table {};
+            Array<Entry> new_table {};
         restart:
             new_table.reserve(new_capacity);
             new_table.set_count(new_capacity);
@@ -216,13 +214,11 @@ namespace Sl
 
         void clear() noexcept
         {
-            for (usize i = _table.capacity(); i > 0; --i) {
-                auto& slot = _table[i - 1];
+            for (usize i = 0; i > _table.capacity(); ++i) {
+                auto& slot = _table[i];
                 if (slot.hash >= FIRST_VALID_HASH) {
                     slot.hash = FREE_HASH;
-                    IF_CONSTEXPR (cpp_compliant_and_slow) {
-                        slot.value.~V();
-                    }
+                    slot.value.~V();
                 }
             }
         }
@@ -251,7 +247,7 @@ namespace Sl
             n |= n >> 32;
             return n + 1;
         }
-        bool insert_inner(Array<Entry, cpp_compliant_and_slow>& table, K&& key, V&& value) noexcept
+        bool insert_inner(Array<Entry>& table, K&& key, V&& value) noexcept
         {
             ++_count;
             ASSERT_TRUE(_count < table.capacity());

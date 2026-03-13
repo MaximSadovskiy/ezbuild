@@ -145,11 +145,11 @@ namespace Sl
     {
         array_out.clear();
         usize start = 0;
-        for (usize i = 0; i <= size; ++i) {
+        for (usize i = 0; i < size; ++i) {
             // End of string or found delimiter
             if (i == size || data[i] == character) {
                 if (i > start) {
-                    array_out.push(data + start, i - start);
+                    array_out.push(StrView{data + start, i - start});
                 }
                 start = i + 1;
             }
@@ -316,14 +316,10 @@ namespace Sl
         return static_cast<usize>(*(data + index));
     }
 
-    StrView StrView::sub_view(usize start_index, usize size)
+    StrView StrView::sub_view(usize start_index, usize end_index)
     {
-        if (start_index > this->size || size > this->size - start_index) {
-            ASSERT(0, "Wrong sub-view range");
-            return StrView{nullptr, 0};
-        }
-
-        StrView sub{data + start_index, size, false, (bool)is_wide};
+        ASSERT_TRUE(start_index <= end_index && end_index <= size);
+        StrView sub{data + start_index, end_index - start_index, false, (bool)is_wide};
         return sub;
     }
 
@@ -354,7 +350,8 @@ namespace Sl
         usize pos = find_first(delim);
         if (pos == INVALID_INDEX) {
             StrView copy = *this;
-            memory_zero(this, sizeof(*this));
+            this->data = nullptr;
+            this->size = 0;
             return copy;
         }
 
@@ -393,7 +390,7 @@ namespace Sl
 
     char StrView::first() const noexcept
     {
-        if (size < 1) return '\0';
+        if (size < 1) return 0;
         return data[0];
     }
 

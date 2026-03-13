@@ -9,7 +9,7 @@ namespace Sl
     struct Allocator;
     void memory_copy(void* dest, usize dest_size, const void* src, usize src_size) noexcept;
 
-    template <typename T, bool cpp_compliant_and_slow = SL_ARRAY_CPP_COMPLIANT>
+    template <typename T>
     struct Array
     {
     protected:
@@ -17,15 +17,17 @@ namespace Sl
         usize _capacity;
         usize _count;
         Allocator* _allocator; // Optional, if set: it will allocate memory from this allocator istead of SL_ARRAY_REALLOC
+        float grow_rate;
     public:
         static const usize INVALID_INDEX = -1;
 
-        Array(Allocator* allocator = nullptr)
+        Array(Allocator* allocator = nullptr, float grow_rate = 2.0)
         {
             this->_allocator = allocator;
             this->_data = nullptr;
             this->_capacity = 0;
             this->_count = 0;
+            this->grow_rate = grow_rate;
         }
 
         template<typename... Args>
@@ -71,17 +73,13 @@ namespace Sl
             ASSERT(_count > 0 && index <= _count, "Index out of range");
             if (_count == 0 || index >= _count) return;
 
-            IF_CONSTEXPR (cpp_compliant_and_slow) {
-                // I don't know what's std::vector devs were smoking
-                if (index != _count - 1) {
-                    std::swap(_data[index], _data[--_count]);
-                } else {
-                    _data[index].~T();
-                    --_count;
-                }
+            // I don't know what's std::vector devs were smoking
+            if (index != _count - 1) {
+                std::swap(_data[index], _data[--_count]);
+            } else {
+                _data[index].~T();
+                --_count;
             }
-            else
-                _data[index] = std::move(_data[--_count]);
         }
 
         template<typename Function>
@@ -101,7 +99,7 @@ namespace Sl
         T& first() noexcept { return get(0); }
         T& last() noexcept { return get(_count - 1); }
         bool is_empty() noexcept { return _count < 1; }
-        bool is_valid_index(usize index) const noexcept { return index < _capacity; }
+        bool is_valid_index(usize index) const noexcept { return index < _count; }
 
         usize find_first(T val) const
         {
@@ -125,16 +123,12 @@ namespace Sl
         T& operator[](usize index) noexcept { return get(index); }
         T* begin() noexcept { return _data; }
         T* end() noexcept { return _data + _count; }
+        usize size_of_t() const noexcept { return ALIGNMENT(sizeof(T), alignof(T)); }
 
-        void pop() noexcept
+        T&& pop() noexcept
         {
             ASSERT(_count > 0, "Cannot pop from empty array");
-            if (_count < 1) return;
-
-            IF_CONSTEXPR (cpp_compliant_and_slow) {
-                _data[_count - 1].~T();
-            }
-            _count -= 1;
+            return std::move(_data[--_count]);
         }
 
         // Does not shrink, if needed: use reserve()
@@ -144,7 +138,7 @@ namespace Sl
             {
                 auto old_capacity = _capacity;
                 if (_capacity == 0) _capacity = 32;
-                while (_capacity < needed_capacity) _capacity *= 2;
+                while (_capacity < needed_capacity) _capacity *= grow_rate;
 
                 if (_allocator)
                     _data = (T*)_allocator->reallocate(_data, old_capacity * ALIGNMENT(sizeof(T), alignof(T)), _capacity * ALIGNMENT(sizeof(T), alignof(T)));
@@ -161,12 +155,8 @@ namespace Sl
                     _data = (T*)_allocator->reallocate(_data, _capacity * ALIGNMENT(sizeof(T), alignof(T)), needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
                 else
                     _data = (T*)SL_ARRAY_REALLOC(_data, needed_capacity * ALIGNMENT(sizeof(T), alignof(T)));
-                _capacity = needed_capacity;
                 ASSERT_DEBUG(_data != nullptr);
-                IF_CONSTEXPR (cpp_compliant_and_slow) {
-                    for (usize i = _count; i < _capacity; ++i)
-                        ::new (_data + i) T(static_cast<T&&>(_data[i]));
-                }
+                _capacity = needed_capacity;
             } else {
                 const auto needed_capacity_bytes = needed_capacity * ALIGNMENT(sizeof(T), alignof(T));
                 T* new_data;
@@ -176,14 +166,10 @@ namespace Sl
                     new_data = (T*)SL_ARRAY_REALLOC(nullptr, needed_capacity_bytes);
                 ASSERT_DEBUG(new_data != nullptr);
                 const auto new_count = needed_capacity < _count ? needed_capacity : _count;
-                IF_CONSTEXPR (cpp_compliant_and_slow) {
-                   for (usize i = 0; i < new_count; ++i)
-                       new_data[i] = std::move(_data[i]);
-                   for (usize i = new_count; i < _count; ++i)
-                       _data[i].~T();
-                } else {
-                    memory_copy((void*)new_data, needed_capacity_bytes, (const void*)_data, needed_capacity_bytes);
-                }
+                for (usize i = 0; i < new_count; ++i)
+                    new_data[i] = std::move(_data[i]);
+                for (usize i = new_count; i < _count; ++i)
+                    _data[i].~T();
                 if (!_allocator) SL_ARRAY_FREE(_data);
                 _data = new_data;
                 _capacity = needed_capacity;
@@ -228,10 +214,8 @@ namespace Sl
 
         void clear() noexcept
         {
-            IF_CONSTEXPR (cpp_compliant_and_slow) {
-                for (usize i = 0; i < _count; ++i) {
-                    _data[i].~T();
-                }
+            for (usize i = 0; i < _count; ++i) {
+                _data[i].~T();
             }
             _count = 0;
         }
@@ -258,47 +242,9 @@ namespace Sl
             return *this;
         }
 
-        Array& operator=(Array&& arr) noexcept
-        {
-            return *this = arr;
-        }
-
-        Array& operator=(Array<T> arr) = delete;
-        Array& operator=(const Array<T>&& arr) = delete;
-        Array& operator=(const Array& arr) = delete;
-    // ----------------------------------------------
-    // Const functions
-    // ----------------------------------------------
-        T& get(usize index) const noexcept
-        {
-            ASSERT(_count > index, "Index out of range");
-            return _data[index];
-        }
-        T& get_unsafe(usize index) const noexcept
-        {
-            return _data[index];
-        }
-
-        T& operator[](usize index) const noexcept { return get(index); }
-        const T* begin() const noexcept { return _data; }
-        const T* end() const noexcept { return _data + _count; }
-
-        T& first() const noexcept { return get(0); }
-        T& last() const noexcept { return get(_count - 1); }
-
-        template<typename Function>
-        void forEach(Function&& func) const noexcept {
-            for (usize i = 0; i < _count; ++i) {
-                func(_data[i]);
-            }
-        }
-
-        template<typename Function>
-        void forEachIndexed(Function&& func) const noexcept {
-            for (usize i = 0; i < _count; ++i) {
-                func(i, _data[i]);
-            }
-        }
+        // Array& operator=(Array<T> arr) = delete;
+        // Array& operator=(const Array<T>&& arr) = delete;
+        // Array& operator=(const Array& arr) = delete;
     };
 
     // * Uses SL_LOCAL_ARRAY_INIT_SIZE stack storage initially.
@@ -371,10 +317,12 @@ namespace Sl
         }
         T& operator[](usize index) noexcept { return get(index); }
 
-        bool is_valid_index(usize index) const noexcept { return index < _allocated_capacity; }
+        bool is_valid_index(usize index) const noexcept { return index < _count; }
         bool is_empty() noexcept { return _count < 1; }
         T& first() noexcept { return get(0); }
         T& last() noexcept { return get(_count - 1); }
+        T* begin() noexcept { return _data; }
+        T* end() noexcept { return _data + _count; }
 
         // Does not shrink
         void resize(usize needed_capacity) noexcept
@@ -393,11 +341,10 @@ namespace Sl
             }
         }
 
-        void pop() noexcept
+        T&& pop() noexcept
         {
             ASSERT(_count > 0, "Cannot pop from empty array");
-            if (_count < 1) return;
-            _data[--_count].~T();
+            return std::move(_data[--_count]);
         }
 
         void remove_unordered(usize index) noexcept
@@ -468,39 +415,6 @@ namespace Sl
             else
                 size *= SL_LOCAL_ARRAY_INIT_SIZE;
             memory_zero(_data, size);
-        }
-    // ----------------------------------------------
-    // Const functions
-    // ----------------------------------------------
-        T& get(usize index) const noexcept
-        {
-            ASSERT(_count > index, "Index out of range");
-            return _data[index];
-        }
-        T& get_unsafe(usize index) const noexcept
-        {
-            return _data[index];
-        }
-
-        T& operator[](usize index) const noexcept { return get(index); }
-        const T* begin() const noexcept { return _data; }
-        const T* end() const noexcept { return _data + _count; }
-
-        T& first() const noexcept { return get(0); }
-        T& last() const noexcept { return get(_count - 1); }
-
-        template<typename Function>
-        void forEach(Function&& func) const noexcept {
-            for (usize i = 0; i < _count; ++i) {
-                func(_data[i]);
-            }
-        }
-
-        template<typename Function>
-        void forEachIndexed(Function&& func) const noexcept {
-            for (usize i = 0; i < _count; ++i) {
-                func(i, _data[i]);
-            }
         }
         usize size_of_t() const noexcept { return ALIGNMENT(sizeof(T), alignof(T)); }
     };
