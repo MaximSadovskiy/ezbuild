@@ -216,7 +216,7 @@ namespace Sl
     }
     StrBuilder& StrBuilder::operator<<(long long val) noexcept
     {
-        char buf[64];
+        char buf[128];
         sprintf(buf, "%lld", val);
         append(buf);
         return *this;

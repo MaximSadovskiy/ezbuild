@@ -390,7 +390,7 @@ namespace Sl
 
     char StrView::first() const noexcept
     {
-        if (size < 1) return 0;
+        if (size < 1) return '\0';
         return data[0];
     }
 
