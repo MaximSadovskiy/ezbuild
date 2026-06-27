@@ -14,14 +14,14 @@
 
 #if defined(EZBUILD_IMPLEMENTATION)
 #   define SL_IMPLEMENTATION
-#   include "Sl/Sl.hpp"
+#   include "Sl.hpp"
 #   undef SL_IMPLEMENTATION
 #endif //EZBUILD_IMPLEMENTATION
 
 #ifndef EZBUILD_H
 #define EZBUILD_H
 
-#include "Sl/Sl.hpp"
+#include "Sl.hpp"
 
 #ifdef _WIN32
 #   define WIN32_LEAN_AND_MEAN
@@ -2045,8 +2045,8 @@ namespace Sl
         StrBuilder tree(get_global_allocator());
         tree.append(this->_output_folder);
         auto folders_count = folders.count();
-        if (folders_count < 1) folders_count = 1;
-        for (usize i = 0; i < folders_count - 1; ++i) {
+        if (folders_count < 1) return;
+        for (usize i = 0; i <= folders_count - 1; ++i) {
             auto folder = folders[i];
             tree.append('/');
             tree.append(folder);

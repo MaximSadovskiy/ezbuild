@@ -5,7 +5,7 @@ using namespace Sl;
 
 int main(int argc, char **argv)
 {
-    rebuild_itself(ExecutableOptions{.std = FlagsSTD::CPP20},
+    rebuild_itself((ExecutableOptions{.debug = true, .std = FlagsSTD::CPP20}),
                     argc, argv, "../../ezbuild.hpp");
 
     // Check if this build.cpp script was rebuilt.
