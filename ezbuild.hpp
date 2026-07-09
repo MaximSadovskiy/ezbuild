@@ -193,6 +193,8 @@ namespace Sl
     bool read_entire_file(StrView file_path, StrBuilder& buffer);
     bool read_entire_file(FileHandle file_handle, StrBuilder& buffer);
     bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder = "");
+    // Check if argument is set
+    bool is_argument_set(StrView expected_arg, int argc, char** argv);
     SystemInfo get_system_info();
     usize get_last_error_code();
     const char* get_error_message();
@@ -310,6 +312,8 @@ namespace Sl
         void append_linker_flags(FlagsCompiler compiler);
         void append_output_name(FlagsCompiler compiler, bool append_flag = true);
         void build_tree_of_folders(StrView file);
+        // Check if build is started, if not exits the program
+        void check_start_build();
     public:
         Array<StrView> source_paths = {};
         Array<StrView> source_files = {};
@@ -322,6 +326,7 @@ namespace Sl
         Array<StrView> defines = {};
         StrView        output_name = {"a", 1, true, false};
         StrView        _output_folder = {".build", 6, true, false};
+        bool           _build_started = false;
         bool           output_contains_ext = false;
         bool           incremental_build = true;
         u32            max_concurent_procceses = 0;
@@ -1469,6 +1474,7 @@ namespace Sl
 
     void Cmd::push_flag_output(FlagsCompiler compiler, bool output_to_obj)
     {
+        check_start_build();
         if (compiler == FlagsCompiler::MSVC)
         {
             if (output_to_obj)
@@ -1482,6 +1488,7 @@ namespace Sl
 
     void Cmd::push_flag_debug(FlagsCompiler compiler)
     {
+        check_start_build();
         if (compiler == FlagsCompiler::MSVC)
             push("/Zi");
         else
@@ -1490,6 +1497,7 @@ namespace Sl
 
     void Cmd::push_flag_optimization(FlagsOptimization optimization, FlagsCompiler compiler)
     {
+        check_start_build();
         if (optimization == FlagsOptimization::NONE)
             return;
 
@@ -1527,6 +1535,7 @@ namespace Sl
 
     void Cmd::push_flag_warning(FlagsWarning warning, FlagsCompiler compiler)
     {
+        check_start_build();
         switch (warning) {
             case FlagsWarning::NORMAL:
             {
@@ -1580,6 +1589,7 @@ namespace Sl
 
     void Cmd::push_flag_std(FlagsSTD std, bool is_cpp, FlagsCompiler compiler)
     {
+        check_start_build();
         if (std == FlagsSTD::NONE)
             return;
 
@@ -1650,8 +1660,20 @@ namespace Sl
             link_library(lib);
     }
 
+    void Cmd::check_start_build() {
+        if (!_build_started) {
+            log_error("You must call start_build() first, noob.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     void Cmd::start_build(ExecutableOptions opt)
     {
+        if (_build_started) {
+            log_error("You can only call start_build() once\n");
+            exit(EXIT_FAILURE);
+        }
+        _build_started = true;
         this->incremental_build = opt.incremental_build;
         const auto compiler = get_compiler();
         const auto compiler_name = get_compiler_name(compiler, opt.is_cpp);
@@ -1667,6 +1689,7 @@ namespace Sl
 
     void Cmd::add_include_path(StrView path)
     {
+        check_start_build();
         append("-I", 2);
         append(path.data, path.size);
         append(' ');
@@ -1743,6 +1766,7 @@ namespace Sl
 
     void Cmd::append_libraries()
     {
+        check_start_build();
         const auto compiler = get_compiler();
         for (auto& lib : link_libraries) {
             if (compiler != FlagsCompiler::MSVC)
@@ -1754,6 +1778,7 @@ namespace Sl
 
     void Cmd::append_libraries_paths()
     {
+        check_start_build();
         const auto compiler = get_compiler();
         if (compiler == FlagsCompiler::MSVC) {
             if (link_libraries_paths.count() > 0 && linker_flags.count() < 1)
@@ -1771,6 +1796,7 @@ namespace Sl
 
     void Cmd::append_defines()
     {
+        check_start_build();
         for (auto& define : defines) {
             append("-D");
             append(define.data, define.size);
@@ -1780,6 +1806,7 @@ namespace Sl
 
     void Cmd::append_custom_flags()
     {
+        check_start_build();
         for (auto& flag : custom_flags) {
             append(flag);
             append(' ');
@@ -1788,6 +1815,7 @@ namespace Sl
 
     void Cmd::append_linker_flags(FlagsCompiler compiler)
     {
+        check_start_build();
         if (compiler == FlagsCompiler::MSVC) {
             if (linker_flags.count() > 0) append("/link ");
         } else {
@@ -1820,6 +1848,7 @@ namespace Sl
 
     void Cmd::append_output_name(FlagsCompiler compiler, bool append_flag)
     {
+        check_start_build();
         if (output_name.size == 0 || !output_name.data) return;
 
         if (append_flag)
@@ -1834,6 +1863,16 @@ namespace Sl
         }
     #endif // !_WIN32
         append(' ');
+    }
+
+    bool is_argument_set(StrView expected_arg, int argc, char** argv)
+    {
+        for (int i = 0; i < argc; ++i) {
+            StrView arg = argv[i];
+            if (arg == expected_arg)
+                return true;
+        }
+        return false;
     }
 
     bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder)
@@ -2046,7 +2085,7 @@ namespace Sl
         tree.append(this->_output_folder);
         auto folders_count = folders.count();
         if (folders_count < 1) return;
-        for (usize i = 0; i <= folders_count - 1; ++i) {
+        for (usize i = 0; i < folders_count - 1; ++i) {
             auto folder = folders[i];
             tree.append('/');
             tree.append(folder);
@@ -2057,6 +2096,10 @@ namespace Sl
 
     bool Cmd::end_build(bool run, bool force_rebuilt)
     {
+        if (!_build_started) {
+            log_error("You must call start_build() first\n");
+            exit(EXIT_FAILURE);
+        }
         const auto compiler = get_compiler();
         bool result = false;
         bool needs_to_rebuilt = false;
@@ -2251,6 +2294,7 @@ namespace Sl
         custom_flags.set_count(0);
         custom_arguments.set_count(0);
         defines.set_count(0);
+        _build_started = false;
         output_contains_ext = false;
         incremental_build = true;
         output_name = {"a", 1, true, false};

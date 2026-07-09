@@ -1278,7 +1278,7 @@ namespace Sl
     #ifndef DEFER_CONCAT_EXPAND
     #  define DEFER_CONCAT_EXPAND(a, b) DEFER_CONCAT(a,b)
     #endif // !DEFER_CONCAT_EXPAND
-    #define defer(code) Defer__ DEFER_CONCAT_EXPAND(defer,__COUNTER__)([&](){code ;});
+    #define defer(code) Sl::Defer__ DEFER_CONCAT_EXPAND(defer,__COUNTER__)([&](){code ;});
 } // namespace Sl
 
 #ifdef SL_IMPLEMENTATION
@@ -1787,7 +1787,8 @@ namespace Sl
         if (_allocator) {
             auto size = vsnprintf(nullptr, 0, format, args);
             if (size > 0) {
-                auto* str = (char*)_allocator->allocate(size);
+                auto* str = (char*)_allocator->allocate(size+1);
+                vsnprintf(str, size+1, format, args);
                 append(str, static_cast<usize>(size));
             }
         } else {
@@ -2234,8 +2235,8 @@ namespace Sl
     {
         array_out.clear();
         usize start = 0;
-        for (usize i = 0; i < size; ++i) {
-            // End of string or found delimiter
+
+        for (usize i = 0; i <= size; ++i) {
             if (i == size || data[i] == character) {
                 if (i > start) {
                     array_out.push(StrView{data + start, i - start});
@@ -2243,6 +2244,7 @@ namespace Sl
                 start = i + 1;
             }
         }
+
         return array_out.count() > 0;
     }
 
