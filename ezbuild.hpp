@@ -199,6 +199,7 @@ namespace Sl
     usize get_last_error_code();
     const char* get_error_message();
     FlagsCompiler get_compiler();
+    FlagsCompiler get_compiler_from_name(StrView compiler_name);
     const char* get_compiler_name(FlagsCompiler compiler = get_compiler(), bool is_cpp = true);
     FlagsSystem get_system();
     const char* get_system_name(FlagsSystem system = get_system());
@@ -260,13 +261,12 @@ namespace Sl
         void print();
         // Trim current command
         void trim();
-        // Clear internal buffer and other resources (It does not cleanup itself)
+        // Full reset for reuse, preserves allocated memory
         void clear();
-
     // This functions are responsible for С/C++ build
     //-------------------------------------------------------------------
         // Starts the build, appending some commands to internal buffer
-        void start_build(ExecutableOptions opt = {});
+        void start_build(ExecutableOptions opt = {}, StrView custom_compiler = {});
         // End the build, flushing all the commands
         bool end_build(bool run, bool force_rebuilt = false);
     // Funtions down below can be called in between start_build() and end_build() in order to configure build steps
@@ -276,14 +276,22 @@ namespace Sl
         void output_folder(StrView folder);
         // Add source file to build step
         void add_source_file(StrView file);
+        // Add source files to build step from a array
+        void add_source_files(const StrView* files, usize count);
         // Add source files from folder (This will add all .c and .cpp files from provided folder)
-        bool include_sources_from_folder(StrView folder_path);
+        bool include_sources_from_folder(StrView folder_path, bool (*filter)(StrView name) = nullptr);
         // Add include search path
         void add_include_path(StrView path);
+        // Add include search paths from a array
+        void add_include_paths(const StrView* paths, usize count);
         // Add define
         void add_define(StrView define_str);
+        // Add defines from a array
+        void add_defines(const StrView* defines, usize count);
         // Add library file to build step
         void link_library(StrView lib);
+        // Add library files to build step from a array
+        void link_libraries_batch(const StrView* libs, usize count);
         // Add library search path
         void add_library_path(StrView path);
         // Add custom compiler flag (Would not be checked for validity)
@@ -312,6 +320,8 @@ namespace Sl
         void append_linker_flags(FlagsCompiler compiler);
         void append_output_name(FlagsCompiler compiler, bool append_flag = true);
         void build_tree_of_folders(StrView file);
+        // Returns compiler based on custom_compiler if set, otherwise detects system compiler
+        FlagsCompiler get_effective_compiler();
         // Check if build is started, if not exits the program
         void check_start_build();
     public:
@@ -329,7 +339,8 @@ namespace Sl
         bool           _build_started = false;
         bool           output_contains_ext = false;
         bool           incremental_build = true;
-        u32            max_concurent_procceses = 0;
+        u32            max_concurrent_processes = 0;
+        StrView        _custom_compiler = {};
     };
 
     struct FileTime
@@ -1340,7 +1351,7 @@ namespace Sl
             STARTUPINFOW startInfo;
             ZeroMemory(&startInfo, sizeof(startInfo));
             startInfo.cb = sizeof(startInfo);
-            if (opt.stderr_desc) startInfo.hStdInput = *opt.stderr_desc;
+            if (opt.stdin_desc) startInfo.hStdInput = *opt.stdin_desc;
             else {
                 startInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
                 if (startInfo.hStdInput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_INPUT_HANDLE\n");
@@ -1352,7 +1363,7 @@ namespace Sl
                 if (startInfo.hStdOutput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_OUTPUT_HANDLE\n");
             }
 
-            if (opt.stdin_desc) startInfo.hStdError = *opt.stdin_desc;
+            if (opt.stderr_desc) startInfo.hStdError = *opt.stderr_desc;
             else {
                 startInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
                 if (startInfo.hStdError == INVALID_HANDLE_VALUE) log_warning("Could not get STD_ERROR_HANDLE\n");
@@ -1363,7 +1374,7 @@ namespace Sl
             STARTUPINFOA startInfo;
             ZeroMemory(&startInfo, sizeof(startInfo));
             startInfo.cb = sizeof(startInfo);
-            if (opt.stderr_desc) startInfo.hStdInput = *opt.stderr_desc;
+            if (opt.stdin_desc) startInfo.hStdInput = *opt.stdin_desc;
             else {
                 startInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
                 if (startInfo.hStdInput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_INPUT_HANDLE\n");
@@ -1375,7 +1386,7 @@ namespace Sl
                 if (startInfo.hStdOutput == INVALID_HANDLE_VALUE) log_warning("Could not get STD_OUTPUT_HANDLE\n");
             }
 
-            if (opt.stdin_desc) startInfo.hStdError = *opt.stdin_desc;
+            if (opt.stderr_desc) startInfo.hStdError = *opt.stderr_desc;
             else {
                 startInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
                 if (startInfo.hStdError == INVALID_HANDLE_VALUE) log_warning("Could not get STD_ERROR_HANDLE\n");
@@ -1385,7 +1396,7 @@ namespace Sl
         }
         if (!success) {
             report_error("Could not create process \"" SV_FORMAT "\"", (int)_count, _data);
-            if (opt.reset_command) reset();
+            if (opt.reset_command) clear();
             return Process(INVALID_PROCESS);
         }
         proc = Process(procInfo.hProcess, procInfo.hThread);
@@ -1457,7 +1468,7 @@ namespace Sl
         proc = cpid;
     #endif // _WIN32
 
-        if (opt.reset_command) reset();
+        if (opt.reset_command) clear();
         if (opt.async) opt.async->push(proc);
         else if (opt.wait_command) proc.wait();
         return proc;
@@ -1660,6 +1671,13 @@ namespace Sl
             link_library(lib);
     }
 
+    FlagsCompiler Cmd::get_effective_compiler()
+    {
+        if (_custom_compiler.size > 0)
+            return get_compiler_from_name(_custom_compiler);
+        return get_compiler();
+    }
+
     void Cmd::check_start_build() {
         if (!_build_started) {
             log_error("You must call start_build() first, noob.\n");
@@ -1667,7 +1685,7 @@ namespace Sl
         }
     }
 
-    void Cmd::start_build(ExecutableOptions opt)
+    void Cmd::start_build(ExecutableOptions opt, StrView custom_compiler)
     {
         if (_build_started) {
             log_error("You can only call start_build() once\n");
@@ -1675,9 +1693,14 @@ namespace Sl
         }
         _build_started = true;
         this->incremental_build = opt.incremental_build;
-        const auto compiler = get_compiler();
-        const auto compiler_name = get_compiler_name(compiler, opt.is_cpp);
-        push(compiler_name);
+        _custom_compiler = custom_compiler;
+        const auto compiler = get_effective_compiler();
+        if (custom_compiler.size > 0) {
+            push(custom_compiler);
+        } else {
+            const auto compiler_name = get_compiler_name(compiler, opt.is_cpp);
+            push(compiler_name);
+        }
         if (compiler == FlagsCompiler::MSVC)
             push("/nologo", "/EHsc");
 
@@ -1696,7 +1719,13 @@ namespace Sl
         source_paths.push(path);
     }
 
-    bool Cmd::include_sources_from_folder(StrView folder_path)
+    void Cmd::add_include_paths(const StrView* paths, usize count)
+    {
+        for (usize i = 0; i < count; i++)
+            add_include_path(paths[i]);
+    }
+
+    bool Cmd::include_sources_from_folder(StrView folder_path, bool (*filter)(StrView name))
     {
         Array<FileEntry> files(get_global_allocator());
         if (!read_folder(folder_path, files))
@@ -1704,7 +1733,8 @@ namespace Sl
 
         for (auto& file : files) {
             auto name = file.name;
-            if (name.ends_with(".cpp") || name.ends_with(".c")) {
+            bool include = filter ? filter(name) : (name.ends_with(".cpp") || name.ends_with(".c"));
+            if (include) {
                 StrBuilder full_path(get_global_allocator());
                 full_path.append(folder_path);
                 if (!folder_path.ends_with("/") && !name.starts_with("/"))
@@ -1742,6 +1772,12 @@ namespace Sl
         defines.push(define_str);
     }
 
+    void Cmd::add_defines(const StrView* defines_list, usize count)
+    {
+        for (usize i = 0; i < count; i++)
+            add_define(defines_list[i]);
+    }
+
     void Cmd::add_source_file(StrView file)
     {
         source_files.push(file);
@@ -1759,15 +1795,27 @@ namespace Sl
         source_files_output.push(source_output.to_string_view());
     }
 
+    void Cmd::add_source_files(const StrView* files, usize count)
+    {
+        for (usize i = 0; i < count; i++)
+            add_source_file(files[i]);
+    }
+
     void Cmd::link_library(StrView lib)
     {
         link_libraries.push(lib);
     }
 
+    void Cmd::link_libraries_batch(const StrView* libs, usize count)
+    {
+        for (usize i = 0; i < count; i++)
+            link_library(libs[i]);
+    }
+
     void Cmd::append_libraries()
     {
         check_start_build();
-        const auto compiler = get_compiler();
+        const auto compiler = get_effective_compiler();
         for (auto& lib : link_libraries) {
             if (compiler != FlagsCompiler::MSVC)
                 append("-l");
@@ -1779,7 +1827,7 @@ namespace Sl
     void Cmd::append_libraries_paths()
     {
         check_start_build();
-        const auto compiler = get_compiler();
+        const auto compiler = get_effective_compiler();
         if (compiler == FlagsCompiler::MSVC) {
             if (link_libraries_paths.count() > 0 && linker_flags.count() < 1)
                 append("/link ");
@@ -1891,7 +1939,7 @@ namespace Sl
             new_depency_path.append('/');
         }
         new_depency_path.append(depency_path);
-        auto compiler = get_compiler();
+        auto compiler = get_effective_compiler();
         if (compiler != FlagsCompiler::MSVC) {
             new_depency_path.append(".d");
             new_depency_path.append_null(false);
@@ -2100,7 +2148,7 @@ namespace Sl
             log_error("You must call start_build() first\n");
             exit(EXIT_FAILURE);
         }
-        const auto compiler = get_compiler();
+        const auto compiler = get_effective_compiler();
         bool result = false;
         bool needs_to_rebuilt = false;
         if (source_files.count() < 1) {
@@ -2129,7 +2177,7 @@ namespace Sl
             }
 
             Processes procs = {};
-            const auto max_procs = max_concurent_procceses == 0 ? get_system_info().number_of_processors * 2 + 1 : max_concurent_procceses;
+            const auto max_procs = max_concurrent_processes == 0 ? get_system_info().number_of_processors * 2 + 1 : max_concurrent_processes;
             StrBuilder output_file_object(get_global_allocator());
 
             HashMapOptions opt{};
@@ -2299,6 +2347,8 @@ namespace Sl
         incremental_build = true;
         output_name = {"a", 1, true, false};
         _output_folder = {".build", 6, true, false};
+        max_concurrent_processes = 0;
+        _custom_compiler = {};
     }
 
     void Cmd::print()
@@ -2317,6 +2367,17 @@ namespace Sl
         #else
             return FlagsCompiler::UNKNOWN;
         #endif
+    }
+
+    FlagsCompiler get_compiler_from_name(StrView compiler_name)
+    {
+        if (compiler_name.ends_with("cl.exe") || compiler_name == "cl")
+            return FlagsCompiler::MSVC;
+        if (compiler_name.ends_with("clang++") || compiler_name.ends_with("clang"))
+            return FlagsCompiler::CLANG;
+        if (compiler_name.ends_with("g++") || compiler_name.ends_with("gcc"))
+            return FlagsCompiler::GCC;
+        return FlagsCompiler::UNKNOWN;
     }
 
     const char* get_compiler_name(FlagsCompiler compiler, bool is_cpp)
@@ -2393,7 +2454,7 @@ namespace Sl
     {
         const auto error_code = get_last_error_code();
     #if defined(_WIN32)
-        static const char* error_msg[EZBUILD_ERROR_MESSAGE_SIZE] = {0};
+        static char error_msg[EZBUILD_ERROR_MESSAGE_SIZE] = {0};
         if (error_code == 0) {
             log_error("Could not get error message\n");
             return nullptr;

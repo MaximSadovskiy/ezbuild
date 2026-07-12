@@ -133,11 +133,11 @@
 #endif // SL_THREAD_LOCAL
 
 #ifndef MAX
-#define MAX(x, y) (x) > (y) ? (x) : (y)
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
 #endif // MAX
 
 #ifndef MIN
-#define MIN(x, y) (x) < (y) ? (x) : (y)
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 #endif // MIN
 
 #ifndef SWAP
@@ -227,11 +227,17 @@ namespace Sl
     void assert_default_(bool condition, const char* file_name, int line, const char* text) noexcept;
     void assert_debug_(bool condition, const char* file_name, int line, const char* text) noexcept;
 
-    // If you want to use snapshot()/rewind() feature:
-    //  you must create your custom snapshot and extend from this class
-    struct Snapshot
+    // Base class for snapshot type erasure (used by Allocator virtual interface)
+    struct SnapshotBase
     {
-        virtual ~Snapshot() = default;
+        virtual ~SnapshotBase() = default;
+    };
+
+    // Template snapshot wrapper - use Snapshot<YourData> instead of inheriting
+    template<typename T>
+    struct Snapshot : SnapshotBase
+    {
+        T data;
     };
 
     // If you want to use custom allocator, you must extend from this base class
@@ -242,8 +248,8 @@ namespace Sl
 
         virtual void* allocate(usize size, u16 alignment = sizeof(void*)) = 0;
         virtual void* reallocate(void* ptr, usize old_size, usize new_size) = 0;
-        virtual Snapshot* snapshot() = 0;
-        virtual void rewind(Snapshot* snapshot) = 0;
+        virtual SnapshotBase* snapshot() = 0;
+        virtual void rewind(SnapshotBase* snapshot) = 0;
         virtual void reset() = 0;
         virtual void cleanup() = 0;
         virtual void display_content() = 0;
@@ -667,15 +673,15 @@ namespace Sl
     void* temp_alloc(usize size, u16 alignment = sizeof(void*)) noexcept;
     // Make a "snapshot" of current state of the global allocator,
     //  in order to restore it later (basically deallocates used resources) by calling temp_end(snapshot);
-    Snapshot* temp_begin() noexcept;
+    SnapshotBase* temp_begin() noexcept;
     // Restores state of the global allocator of when temp_begin() was called
     //  (!!! This doesnt actually free's any resources)
-    void temp_end(Snapshot* snapshot) noexcept;
+    void temp_end(SnapshotBase* snapshot) noexcept;
     // Resets (but not free's!!) global allocator
     //  Only recomended if you know that you not use resources allocated by global allocator.
     //  Some ezbuild.h functions uses global_allocator, for example to strdup file names.
     // Better do:
-    //   Snapshot* snapshot = temp_begin();
+    //   SnapshotBase* snapshot = temp_begin();
     //   {
     //     // do some temporary allocations...
     //   }
@@ -692,7 +698,7 @@ namespace Sl
     struct ScopedAllocator
     {
         Allocator* _allocator_ref;
-        Snapshot* _snapshot;
+        SnapshotBase* _snapshot;
 
         ScopedAllocator(Allocator& allocator)
         {
@@ -710,11 +716,12 @@ namespace Sl
         }
     };
 
-    struct ArenaSnapshot : Snapshot
+    struct ArenaSnapshotData
     {
         usize region_index = 0;
         usize index = 0;
     };
+    using ArenaSnapshot = Snapshot<ArenaSnapshotData>;
 
     struct ArenaRegion
     {
@@ -742,17 +749,18 @@ namespace Sl
 
         void* allocate(usize size, u16 alignment = sizeof(void*)) override;
         void* reallocate(void* ptr, usize old_size, usize new_size) override;
-        Snapshot* snapshot() override;
-        void rewind(Snapshot* snapshot) override;
+        SnapshotBase* snapshot() override;
+        void rewind(SnapshotBase* snapshot) override;
         void reset() override;
         void cleanup() override;
         void display_content() override;
     };
 
-    struct LinearSnapshot : Snapshot
+    struct LinearSnapshotData
     {
         usize index = 0;
     };
+    using LinearSnapshot = Snapshot<LinearSnapshotData>;
     struct LinearAllocator : Allocator
     {
         char* data;
@@ -768,17 +776,18 @@ namespace Sl
 
         void* allocate(usize size, u16 alignment = sizeof(void*)) override;
         void* reallocate(void* ptr, usize old_size, usize new_size) override;
-        Snapshot* snapshot() override;
-        void rewind(Snapshot* snapshot) override;
+        SnapshotBase* snapshot() override;
+        void rewind(SnapshotBase* snapshot) override;
         void reset() override;
         void cleanup() override;
         void display_content() override;
     };
 
-    struct StackSnapshot : Snapshot
+    struct StackSnapshotData
     {
         void* current = nullptr;
     };
+    using StackSnapshot = Snapshot<StackSnapshotData>;
     struct StackAllocator : Allocator
     {
         void* begin;
@@ -795,8 +804,8 @@ namespace Sl
         }
         void* allocate(usize size, u16 alignment = sizeof(void*)) override;
         void* reallocate(void* ptr, usize old_size, usize new_size) override;
-        Snapshot* snapshot() override;
-        void rewind(Snapshot* snapshot) override;
+        SnapshotBase* snapshot() override;
+        void rewind(SnapshotBase* snapshot) override;
         void reset() override;
         void cleanup() override;
         void display_content() override;
@@ -805,10 +814,11 @@ namespace Sl
     typedef struct PoolChunk {
         struct PoolChunk* next;
     } PoolChunk;
-    struct PoolSnapshot : Snapshot
+    struct PoolSnapshotData
     {
         PoolChunk* current_chunk = nullptr;
     };
+    using PoolSnapshot = Snapshot<PoolSnapshotData>;
     struct PoolAllocator : Allocator
     {
         PoolChunk* root;
@@ -826,8 +836,8 @@ namespace Sl
 
         void* allocate(usize size, u16 alignment = sizeof(void*)) override; // Alignment is ignore in this one
         void* reallocate(void* ptr, usize old_size, usize new_size) override;
-        Snapshot* snapshot() override;
-        void rewind(Snapshot* snapshot) override;
+        SnapshotBase* snapshot() override;
+        void rewind(SnapshotBase* snapshot) override;
         void reset() override;
         void cleanup() override;
         void display_content() override;
@@ -934,7 +944,7 @@ namespace Sl
                 auto& slot = _table[probe];
                 if (slot.hash < FIRST_VALID_HASH) {
                     ::new (&slot.value) V(std::forward<Args>(args)...);
-                    slot.key = key;
+                    slot.key = std::move(key);
                     slot.hash = _hash;
                     return;
                 }
@@ -1013,7 +1023,7 @@ namespace Sl
             if (!is_power_of_two(new_capacity)) {
                 new_capacity = next_power_of_two(new_capacity);
             }
-            Array<Entry> new_table {};
+            Array<Entry> new_table {_table.allocator()};
         restart:
             new_table.reserve(new_capacity);
             new_table.set_count(new_capacity);
@@ -1040,13 +1050,14 @@ namespace Sl
 
         void clear() noexcept
         {
-            for (usize i = 0; i > _table.capacity(); ++i) {
+            for (usize i = 0; i < _table.capacity(); ++i) {
                 auto& slot = _table[i];
                 if (slot.hash >= FIRST_VALID_HASH) {
                     slot.hash = FREE_HASH;
                     slot.value.~V();
                 }
             }
+            _count = 0;
         }
 
         void cleanup() noexcept
@@ -1313,12 +1324,12 @@ namespace Sl
         return get_global_allocator()->allocate(size, alignment);
     }
 
-    Snapshot* temp_begin() noexcept
+    SnapshotBase* temp_begin() noexcept
     {
         return get_global_allocator()->snapshot();
     }
 
-    void temp_end(Snapshot* snapshot) noexcept
+    void temp_end(SnapshotBase* snapshot) noexcept
     {
         get_global_allocator()->rewind(snapshot);
     }
@@ -1374,25 +1385,21 @@ namespace Sl
         total_size = 0;
     }
 
-    void LinearAllocator::rewind(Snapshot* _snapshot)
+    void LinearAllocator::rewind(SnapshotBase* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        LinearSnapshot* snapshot = dynamic_cast<LinearSnapshot*>(_snapshot);
-        if (snapshot == nullptr) {
-            ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
-            return;
-        }
-        this->cursor = snapshot->index;
+        LinearSnapshot* snapshot = static_cast<LinearSnapshot*>(_snapshot);
+        this->cursor = snapshot->data.index;
     }
 
-    Snapshot* LinearAllocator::snapshot()
+    SnapshotBase* LinearAllocator::snapshot()
     {
         auto current_cursor = cursor;
         auto* snapshot = (LinearSnapshot*) temp_alloc(sizeof(LinearSnapshot));
         ASSERT_NOT_NULL(snapshot);
-        ::new (snapshot) LinearSnapshot; // Initilize RTTI for virtual methods
+        ::new (snapshot) LinearSnapshot;
 
-        snapshot->index = current_cursor;
+        snapshot->data.index = current_cursor;
         return snapshot;
     }
 
@@ -1433,7 +1440,7 @@ namespace Sl
         return new_ptr;
     }
 
-    Snapshot* StackAllocator::snapshot()
+    SnapshotBase* StackAllocator::snapshot()
     {
         if (this->begin == nullptr || this->end == nullptr)  // initilize memory if empty
             allocate(0, 0);
@@ -1441,25 +1448,21 @@ namespace Sl
         auto* current_ptr = this->current;
         auto* snapshot = (StackSnapshot*) temp_alloc(sizeof(StackSnapshot));
         ASSERT_NOT_NULL(snapshot);
-        ::new (snapshot) StackSnapshot; // Initilize RTTI for virtual methods
+        ::new (snapshot) StackSnapshot;
 
         if (current_ptr == nullptr) current_ptr = this->begin;
-        snapshot->current = current_ptr;
+        snapshot->data.current = current_ptr;
         return snapshot;
     }
 
-    void StackAllocator::rewind(Snapshot* _snapshot)
+    void StackAllocator::rewind(SnapshotBase* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        StackSnapshot* snapshot = dynamic_cast<StackSnapshot*>(_snapshot);
-        if (snapshot == nullptr) {
-            ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
-            return;
-        }
+        StackSnapshot* snapshot = static_cast<StackSnapshot*>(_snapshot);
 
-        ASSERT_TRUE(snapshot->current >= (void*)this->begin);
-        ASSERT_TRUE(snapshot->current <= (void*)this->end);
-        this->current = snapshot->current;
+        ASSERT_TRUE(snapshot->data.current >= (void*)this->begin);
+        ASSERT_TRUE(snapshot->data.current <= (void*)this->end);
+        this->current = snapshot->data.current;
     }
 
     void StackAllocator::reset()
@@ -1525,31 +1528,27 @@ namespace Sl
         return new_ptr;
     }
 
-    Snapshot* PoolAllocator::snapshot()
+    SnapshotBase* PoolAllocator::snapshot()
     {
         auto* current_chunk = this->pool;
         auto* snapshot = (PoolSnapshot*) temp_alloc(sizeof(PoolSnapshot));
         ASSERT_NOT_NULL(snapshot);
-        ::new (snapshot) PoolSnapshot; // Initilize RTTI for virtual methods
+        ::new (snapshot) PoolSnapshot;
         if (current_chunk == nullptr) {
             if (this->root == nullptr) allocate(0, 0); // initilize memory
             current_chunk = this->root;
         }
 
-        snapshot->current_chunk = current_chunk;
+        snapshot->data.current_chunk = current_chunk;
         return snapshot;
     }
 
-    void PoolAllocator::rewind(Snapshot* _snapshot)
+    void PoolAllocator::rewind(SnapshotBase* _snapshot)
     {
         if (_snapshot == nullptr) return;
 
-        PoolSnapshot* snapshot = dynamic_cast<PoolSnapshot*>(_snapshot);
-        if (snapshot == nullptr) {
-            ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
-            return;
-        }
-        this->pool = snapshot->current_chunk;
+        PoolSnapshot* snapshot = static_cast<PoolSnapshot*>(_snapshot);
+        this->pool = snapshot->data.current_chunk;
     }
 
     void PoolAllocator::reset()
@@ -1647,34 +1646,30 @@ namespace Sl
         _current_region_index = 0;
     }
 
-    void ArenaAllocator::rewind(Snapshot* _snapshot)
+    void ArenaAllocator::rewind(SnapshotBase* _snapshot)
     {
         if (_snapshot == nullptr) return;
-        ArenaSnapshot* snapshot = dynamic_cast<ArenaSnapshot*>(_snapshot);
-        if (snapshot == nullptr) {
-            ASSERT(snapshot != nullptr, "Failed to cast snapshot, when trying to rewind");
-            return;
-        }
+        ArenaSnapshot* snapshot = static_cast<ArenaSnapshot*>(_snapshot);
 
-        if (snapshot->region_index < _regions.count()) {
-            auto& region = _regions[snapshot->region_index];
-            region.cursor = snapshot->index;
-            _current_region_index = snapshot->region_index;
-            for (usize i = snapshot->region_index + 1; i < _regions.count(); ++i)
+        if (snapshot->data.region_index < _regions.count()) {
+            auto& region = _regions[snapshot->data.region_index];
+            region.cursor = snapshot->data.index;
+            _current_region_index = snapshot->data.region_index;
+            for (usize i = snapshot->data.region_index + 1; i < _regions.count(); ++i)
                 _regions[i].cursor = 0;
         }
     }
 
-    Snapshot* ArenaAllocator::snapshot()
+    SnapshotBase* ArenaAllocator::snapshot()
     {
         if (_regions.count() < 1) allocate(0, 0); // initilize regions if empty
 
         const auto current_index = _regions[_current_region_index].cursor;
         ArenaSnapshot* snapshot = (ArenaSnapshot*) temp_alloc(sizeof(ArenaSnapshot), alignof(ArenaSnapshot));
         ASSERT_NOT_NULL(snapshot);
-        ::new (snapshot) ArenaSnapshot; // Initilize RTTI for virtual methods
-        snapshot->region_index = _current_region_index;
-        snapshot->index = current_index;
+        ::new (snapshot) ArenaSnapshot;
+        snapshot->data.region_index = _current_region_index;
+        snapshot->data.index = current_index;
         return snapshot;
     }
 
@@ -1784,17 +1779,22 @@ namespace Sl
 
         va_list args;
         va_start(args, format);
-        if (_allocator) {
-            auto size = vsnprintf(nullptr, 0, format, args);
-            if (size > 0) {
+        va_list args_copy;
+        va_copy(args_copy, args);
+        auto size = vsnprintf(nullptr, 0, format, args_copy);
+        va_end(args_copy);
+        if (size > 0) {
+            if (_allocator) {
                 auto* str = (char*)_allocator->allocate(size+1);
-                vsnprintf(str, size+1, format, args);
+                va_copy(args_copy, args);
+                vsnprintf(str, size+1, format, args_copy);
+                va_end(args_copy);
                 append(str, static_cast<usize>(size));
-            }
-        } else {
-            char buf[4096];
-            auto size = vsnprintf(buf, sizeof(buf), format, args);
-            if (size > 0) {
+            } else {
+                char buf[4096];
+                va_copy(args_copy, args);
+                vsnprintf(buf, sizeof(buf), format, args_copy);
+                va_end(args_copy);
                 append(buf, static_cast<usize>(size));
             }
         }
