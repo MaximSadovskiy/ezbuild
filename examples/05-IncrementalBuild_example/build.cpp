@@ -39,8 +39,8 @@ int main(int argc, char **argv)
 
     cmd.add_source_file("Main.cpp");
     cmd.add_source_file("Second.cpp");
-    // Include all .c/.cpp files in "inner/" folder
-    cmd.include_sources_from_folder("inner/");
+    // Include all .c/.cpp files in "inner/" folder and its subfolders
+    cmd.include_sources_from_folder("inner/", true);
 
     StrView custom_flag = "-fwrapv";
     if (is_flag_supported_cpp(custom_flag))

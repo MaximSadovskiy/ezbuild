@@ -170,7 +170,7 @@ namespace Sl
     // Compares time of depency files with provided file. If true, that means file needs to be rebuilt. Useful for non C/C++ builds.
     Result file_needs_rebuilt(StrView file, LocalArray<StrView>& dependency_files);
     // Must-have for incremental builds. This function checks depencies of C/C++ file by itself (for example #include "...").
-    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "", HashMap<StrView, FileTimeUnit, StrView::hash>* memoization = nullptr);
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder = "", StrView custom_compiler = "", HashMap<StrView, FileTimeUnit, StrView::hash>* memoization = nullptr);
     // Checks if provided argument is supported for current compiler
     bool is_flag_supported_cpp(StrView expected_flag);
     // Returns all supported flags for current compiler
@@ -192,7 +192,7 @@ namespace Sl
     bool read_folder(StrView folder_path, Array<FileEntry>& files_out);
     bool read_entire_file(StrView file_path, StrBuilder& buffer);
     bool read_entire_file(FileHandle file_handle, StrBuilder& buffer);
-    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder = "");
+    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder = "", StrView custom_compiler = "");
     // Check if argument is set
     bool is_argument_set(StrView expected_arg, int argc, char** argv);
     SystemInfo get_system_info();
@@ -261,12 +261,14 @@ namespace Sl
         void print();
         // Trim current command
         void trim();
+        // Reset internal command buffer
+        void reset();
         // Full reset for reuse, preserves allocated memory
         void clear();
     // This functions are responsible for С/C++ build
     //-------------------------------------------------------------------
         // Starts the build, appending some commands to internal buffer
-        void start_build(ExecutableOptions opt = {}, StrView custom_compiler = {});
+        void start_build(ExecutableOptions opt = {}, StrView custom_compiler = "");
         // End the build, flushing all the commands
         bool end_build(bool run, bool force_rebuilt = false);
     // Funtions down below can be called in between start_build() and end_build() in order to configure build steps
@@ -279,7 +281,7 @@ namespace Sl
         // Add source files to build step from a array
         void add_source_files(const StrView* files, usize count);
         // Add source files from folder (This will add all .c and .cpp files from provided folder)
-        bool include_sources_from_folder(StrView folder_path, bool (*filter)(StrView name) = nullptr);
+        bool include_sources_from_folder(StrView folder_path, bool recursive = false, bool (*filter)(StrView name) = nullptr);
         // Add include search path
         void add_include_path(StrView path);
         // Add include search paths from a array
@@ -340,7 +342,7 @@ namespace Sl
         bool           output_contains_ext = false;
         bool           incremental_build = true;
         u32            max_concurrent_processes = 0;
-        StrView        _custom_compiler = {};
+        StrView        _custom_compiler = "";
     };
 
     struct FileTime
@@ -1396,7 +1398,7 @@ namespace Sl
         }
         if (!success) {
             report_error("Could not create process \"" SV_FORMAT "\"", (int)_count, _data);
-            if (opt.reset_command) clear();
+            if (opt.reset_command) reset();
             return Process(INVALID_PROCESS);
         }
         proc = Process(procInfo.hProcess, procInfo.hThread);
@@ -1468,7 +1470,7 @@ namespace Sl
         proc = cpid;
     #endif // _WIN32
 
-        if (opt.reset_command) clear();
+        if (opt.reset_command) reset();
         if (opt.async) opt.async->push(proc);
         else if (opt.wait_command) proc.wait();
         return proc;
@@ -1725,7 +1727,7 @@ namespace Sl
             add_include_path(paths[i]);
     }
 
-    bool Cmd::include_sources_from_folder(StrView folder_path, bool (*filter)(StrView name))
+    bool Cmd::include_sources_from_folder(StrView folder_path, bool recursive, bool (*filter)(StrView name))
     {
         Array<FileEntry> files(get_global_allocator());
         if (!read_folder(folder_path, files))
@@ -1733,6 +1735,16 @@ namespace Sl
 
         for (auto& file : files) {
             auto name = file.name;
+            if (recursive && file.type == FileType::DIRECTORY && !name.equals(".") && !name.equals("..")) {
+                StrBuilder sub_path(get_global_allocator());
+                sub_path.append(folder_path);
+                if (!folder_path.ends_with("/") && !name.starts_with("/"))
+                    sub_path.append('/');
+                sub_path.append(name);
+                sub_path.append_null(false);
+                include_sources_from_folder(sub_path.to_string_view(true, name.is_wide || folder_path.is_wide), true, filter);
+                continue;
+            }
             bool include = filter ? filter(name) : (name.ends_with(".cpp") || name.ends_with(".c"));
             if (include) {
                 StrBuilder full_path(get_global_allocator());
@@ -1923,7 +1935,7 @@ namespace Sl
         return false;
     }
 
-    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder)
+    bool read_dependencies(StrView depency_path, Array<StrView>& depencies_out, StrView output_folder, StrView custom_compiler)
     {
         auto cpp_index = depency_path.find_last(".cpp");
         if (cpp_index == StrView::INVALID_INDEX) {
@@ -1939,7 +1951,7 @@ namespace Sl
             new_depency_path.append('/');
         }
         new_depency_path.append(depency_path);
-        auto compiler = get_effective_compiler();
+        auto compiler = custom_compiler.size > 0 ? get_compiler_from_name(custom_compiler) : get_compiler();
         if (compiler != FlagsCompiler::MSVC) {
             new_depency_path.append(".d");
             new_depency_path.append_null(false);
@@ -2063,7 +2075,7 @@ namespace Sl
         return true;
     }
 
-    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder, HashMap<StrView, FileTimeUnit, StrView::hash>* memoization)
+    Result file_needs_rebuilt_cpp(StrView obj, StrView src_file, StrView output_folder, StrView custom_compiler, HashMap<StrView, FileTimeUnit, StrView::hash>* memoization)
     {
         ASSERT(obj.data != nullptr && obj.size > 0, "Provide correct object file path");
         ASSERT(src_file.data != nullptr && src_file.size > 0, "Provide correct source file path");
@@ -2087,7 +2099,7 @@ namespace Sl
             return Result::SL_TRUE;
 
         Array<StrView> deps(get_global_allocator());
-        if (!read_dependencies(src_file, deps, output_folder)) return Result::SL_ERROR;
+        if (!read_dependencies(src_file, deps, output_folder, custom_compiler)) return Result::SL_ERROR;
 
         StrBuilder escaped_dependency(get_global_allocator());
         for (auto& dependency : deps) {
@@ -2252,7 +2264,7 @@ namespace Sl
                 output_file_object.append(".obj");
                 output_file_object.append_null(false);
                 const auto output_file_object_path = output_file_object.to_string_view(true);
-                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder, &memoization) != Result::SL_FALSE)
+                if (force_rebuilt || file_needs_rebuilt_cpp(output_file_object_path, file, _output_folder, _custom_compiler, &memoization) != Result::SL_FALSE)
                 {
                     if (compiler == FlagsCompiler::MSVC)
                         append("/c ");
@@ -2330,9 +2342,14 @@ namespace Sl
         return result;
     }
 
-    void Cmd::clear()
+    void Cmd::reset()
     {
         _count = 0;
+    }
+
+    void Cmd::clear()
+    {
+        reset();
         source_paths.set_count(0);
         source_files.set_count(0);
         source_files_output.set_count(0);
@@ -2348,7 +2365,7 @@ namespace Sl
         output_name = {"a", 1, true, false};
         _output_folder = {".build", 6, true, false};
         max_concurrent_processes = 0;
-        _custom_compiler = {};
+        _custom_compiler = "";
     }
 
     void Cmd::print()
@@ -2494,14 +2511,7 @@ namespace Sl
     {
         if (argv == nullptr) return false;
 
-        StrView signature = "EZBUILD_REBUILT";
-        for (int i = 0; i < argc; ++i)
-        {
-            if (argv[i] == nullptr) continue;
-            if (memory_equals(argv[i], memory_strlen(argv[i]), signature.data, signature.size))
-                return true;
-        }
-        return false;
+        return is_argument_set("EZBUILD_REBUILT", argc, argv);
     }
 
     void rebuild_itself_args(bool force, ExecutableOptions options, int argc, char **argv, const char *source_path, ...)
